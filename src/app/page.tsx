@@ -336,30 +336,25 @@ export default function MatchControl() {
           {step === "ATTENDANCE" && (
             <Stack gap="sm">
               <Title order={3}>출석 체크</Title>
+              <Text size="sm" c="dimmed">기본: 결석 / 참가 버튼으로 전환</Text>
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 {players.map((p) => {
                   const att = attendances.find((a) => a.player_id === p.id);
+                  const status = att?.status === "ATTENDING" ? "ATTENDING" : "ABSENT";
                   return (
                     <Group key={p.id} justify="space-between" className="border rounded p-3">
                       <Text>{p.name}</Text>
                       <Group gap="xs">
                         <Button
                           size="xs"
-                          color={att?.status === "ATTENDING" ? "green" : "gray"}
-                          onClick={() => markAttendance(p.id, "ATTENDING")}
+                          color={status === "ATTENDING" ? "green" : "gray"}
+                          onClick={() => markAttendance(p.id, status === "ATTENDING" ? "ABSENT" : "ATTENDING")}
                         >
-                          참가
+                          {status === "ATTENDING" ? "참가" : "결석"}
                         </Button>
-                        <Button
-                          size="xs"
-                          color={att?.status === "ABSENT" ? "red" : "gray"}
-                          onClick={() => markAttendance(p.id, "ABSENT")}
-                        >
-                          결석
-                        </Button>
-                        {att?.status === "ATTENDING" && (
+                        {status === "ATTENDING" && (
                           <Badge variant="light" color="yellow">
-                            {att.arrival_rank != null ? `#${att.arrival_rank}` : "순서미정"}
+                            {att?.arrival_rank != null ? `#${att.arrival_rank}` : "순서미정"}
                           </Badge>
                         )}
                       </Group>
@@ -384,11 +379,20 @@ export default function MatchControl() {
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 {TEAMS.map((team) => {
                   const members = attendingPlayers.filter((p) => lineups[p.id] === team.value);
+                  const ordered = useMemo(() => {
+                    const order: Record<string, number> = { FW: 0, MF: 1, DF: 2, GK: 3, referee: 4, assistant_referee: 5, player: 6 };
+                    return [...members].sort((a, b) => {
+                      const ra = order[roles[a.id] ?? "player"] ?? 99;
+                      const rb = order[roles[b.id] ?? "player"] ?? 99;
+                      return ra - rb;
+                    });
+                  }, [members, roles]);
+                  const bgColor = team.value === "A" ? "var(--mantine-color-orange-1)" : "var(--mantine-color-teal-1)";
                   return (
-                    <Paper key={team.value} withBorder p="md">
+                    <Paper key={team.value} withBorder p="md" style={{ backgroundColor: bgColor }}>
                       <Text fw={600}>{team.label}</Text>
                       <Stack gap="xs" mt="sm">
-                        {members.map((p) => {
+                        {ordered.map((p) => {
                           const role = roles[p.id];
                           const roleLabel =
                             role === "referee"
@@ -407,7 +411,7 @@ export default function MatchControl() {
                                 size="xs"
                                 data={[
                                   { value: team.value, label: teamLabel(team.value) },
-                                  { value: "BENCH", label: "벤치" },
+                                  { value: "BENCH", label: "휴식" },
                                 ]}
                                 value={lineups[p.id]}
                                 onChange={(val) => setTeam(p.id, val as "A" | "B" | "BENCH")}
@@ -434,38 +438,71 @@ export default function MatchControl() {
                   );
                 })}
                 <Paper withBorder p="md">
-                  <Text fw={600}>벤치</Text>
+                  <Text fw={600}>배치/역할</Text>
                   <Stack gap="xs" mt="sm">
                     {attendingPlayers
                       .filter((p) => lineups[p.id] === "BENCH" || !lineups[p.id])
-                      .map((p) => (
-                        <Group key={p.id} gap="xs" wrap="wrap">
-                          <Text size="sm" className="min-w-20">{p.name}</Text>
-                          <Select
-                            size="xs"
-                            data={[
-                              { value: "A", label: "주황/블랙" },
-                              { value: "B", label: "연두/흰색" },
-                              { value: "BENCH", label: "벤치" },
-                            ]}
-                            value={lineups[p.id] ?? "BENCH"}
-                            onChange={(val) => setTeam(p.id, val as "A" | "B" | "BENCH")}
-                            className="w-28"
-                          />
-                          <Select
-                            size="xs"
-                            data={[
-                              { value: "player", label: "선수" },
-                              { value: "gk", label: "GK" },
-                              { value: "referee", label: "주심" },
-                              { value: "assistant_referee", label: "부심" },
-                            ]}
-                            value={roles[p.id] ?? "player"}
-                            onChange={(val) => setPlayerRole(p.id, (val ?? "player") as RoleType)}
-                            className="w-28"
-                          />
-                        </Group>
-                      ))}
+                      .map((p) => {
+                        const role = roles[p.id];
+                        const combined =
+                          role === "referee"
+                            ? "주심"
+                            : role === "assistant_referee"
+                              ? "부심"
+                              : role === "gk"
+                                ? "GK"
+                                : "휴식";
+                        const currentValue =
+                          role === "referee"
+                            ? "referee"
+                            : role === "assistant_referee"
+                              ? "assistant_referee"
+                              : role === "gk"
+                                ? "gk"
+                                : lineups[p.id] === "A"
+                                  ? "A"
+                                  : lineups[p.id] === "B"
+                                    ? "B"
+                                    : "BENCH";
+                        return (
+                          <Group key={p.id} gap="xs" wrap="wrap">
+                            <Text size="sm" className="min-w-20">{p.name}</Text>
+                            <Select
+                              size="xs"
+                              data={[
+                                { value: "A", label: "주황/블랙" },
+                                { value: "B", label: "연두/흰색" },
+                                { value: "referee", label: "주심" },
+                                { value: "assistant_referee", label: "부심" },
+                                { value: "gk", label: "GK" },
+                                { value: "BENCH", label: "휴식" },
+                              ]}
+                              value={currentValue}
+                              onChange={(val) => {
+                                const v = val ?? "BENCH";
+                                if (v === "A" || v === "B") {
+                                  setTeam(p.id, v as "A" | "B");
+                                  setPlayerRole(p.id, "player");
+                                } else if (v === "referee") {
+                                  setTeam(p.id, "BENCH");
+                                  setPlayerRole(p.id, "referee");
+                                } else if (v === "assistant_referee") {
+                                  setTeam(p.id, "BENCH");
+                                  setPlayerRole(p.id, "assistant_referee");
+                                } else if (v === "gk") {
+                                  setTeam(p.id, "BENCH");
+                                  setPlayerRole(p.id, "gk");
+                                } else {
+                                  setTeam(p.id, "BENCH");
+                                  setPlayerRole(p.id, "player");
+                                }
+                              }}
+                              className="w-36"
+                            />
+                            <Badge color="gray">{combined}</Badge>
+                          </Group>
+                        );
+                      })}
                   </Stack>
                 </Paper>
               </SimpleGrid>
