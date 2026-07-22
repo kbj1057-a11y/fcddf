@@ -81,6 +81,7 @@ export default function MatchControl() {
   const loadGames = async () => {
     const { data } = await supabase.from("games").select("*").eq("match_date", matchDate).order("label");
     setGames(data || []);
+    return data || [];
   };
 
   const markAttendance = async (playerId: string, status: Attendance["status"]) => {
@@ -418,22 +419,11 @@ export default function MatchControl() {
       }
 
       alert("저장 완료");
-      setGames((prev) => [...prev, game]);
-      setGameLabel(nextGameLabel);
       resetLineup();
-      await loadGames();
-
-      const { data: qs } = await supabase.from("match_quarters").select("id").eq("match_date", matchDate);
-      const qIds = (qs || []).map((q) => q.id);
-      if (qIds.length) {
-        const { data: lineups } = await supabase.from("quarter_lineups").select("player_id").in("quarter_id", qIds);
-        const playedIds = new Set((lineups || []).map((r) => r.player_id));
-        for (const pid of playedIds) {
-          const player = players.find((p) => p.id === pid);
-          if (!player) continue;
-          await supabase.from("players").update({ today_game_count: (player.today_game_count ?? 0) + 1 }).eq("id", pid);
-        }
-      }
+      const latestGames = await loadGames();
+      const nums = latestGames.map((g) => parseInt(g.label || "0", 10)).filter((n) => !Number.isNaN(n));
+      const max = nums.reduce((m, n) => Math.max(m, n), 0);
+      setGameLabel(String(max + 1));
       await loadPlayers();
     } finally {
       setLoading(false);
