@@ -169,59 +169,56 @@ export default function MatchControl() {
       teams[pick].push(player);
     }
 
-    const teamEntries: ["A" | "B", Player[]][] = [
-      ["A", teams.A],
-      ["B", teams.B],
-    ];
-    for (const [teamKey, group] of teamEntries) {
-      const sortedTeam = [...group].sort((a, b) => (TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9));
-      teams[teamKey] = [];
+    const nextLineups: TeamMap = {};
+    const nextRoles: RoleMap = {};
+
+    for (const teamKey of ["A", "B"] as const) {
+      const group = teams[teamKey];
       if (!isFull) {
-        for (const p of sortedTeam) teams[teamKey].push(p);
+        for (const p of group) {
+          nextLineups[p.id] = teamKey;
+          nextRoles[p.id] = "player";
+        }
         continue;
       }
+
       const gkReady: Player[] = [];
       const fillReady: Player[] = [];
-      for (const p of sortedTeam) {
+      for (const p of group) {
         if (p.tier === "S" && teamSlots[teamKey].GK === 0) gkReady.push(p);
         else fillReady.push(p);
       }
+
       const seated: Player[] = [];
+      const seatedRoles: Record<string, string> = {};
       const deskSlots: { value: string; max: number }[] = [
         { value: "DF", max: 4 },
         { value: "MF", max: 3 },
         { value: "FW", max: 3 },
       ];
-      if (gkReady.length > 0) {
-        const gk = gkReady[0];
-        teamSlots[teamKey].GK += 1;
-        seated.push(gk);
-      }
       for (const slot of deskSlots) {
         for (const p of fillReady) {
           if (seated.includes(p)) continue;
           if (teamSlots[teamKey][slot.value] < slot.max) {
             teamSlots[teamKey][slot.value] += 1;
             seated.push(p);
+            seatedRoles[p.id] = slot.value;
           }
         }
       }
       const rest = fillReady.filter((p) => !seated.includes(p));
-      teams[teamKey] = [...seated, ...rest];
-    }
-
-    const nextLineups: TeamMap = {};
-    const nextRoles: RoleMap = {};
-    for (const [teamKey, group] of teamEntries) {
-      for (const p of group) {
+      const finalGroup = [...seated, ...rest];
+      for (const p of finalGroup) {
         nextLineups[p.id] = teamKey;
-        nextRoles[p.id] = "player";
+        nextRoles[p.id] = (seatedRoles[p.id] ?? "player") as RoleType;
       }
     }
+
     for (const p of bench) {
       nextLineups[p.id] = "BENCH";
       nextRoles[p.id] = "player";
     }
+
     setLineups(nextLineups);
     setRoles(nextRoles);
   };
