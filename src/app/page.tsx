@@ -407,14 +407,10 @@ export default function MatchControl() {
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 {TEAMS.map((team) => {
                   const members = attendingPlayers.filter((p) => lineups[p.id] === team.value);
-                  const ordered = useMemo(() => {
+                  const ordered = [...members].sort((a, b) => {
                     const order: Record<string, number> = { FW: 0, MF: 1, DF: 2, GK: 3, referee: 4, assistant_referee: 5, player: 6 };
-                    return [...members].sort((a, b) => {
-                      const ra = order[roles[a.id] ?? "player"] ?? 99;
-                      const rb = order[roles[b.id] ?? "player"] ?? 99;
-                      return ra - rb;
-                    });
-                  }, [members, roles]);
+                    return (order[roles[a.id] ?? "player"] ?? 99) - (order[roles[b.id] ?? "player"] ?? 99);
+                  });
                   const bgColor = team.value === "A" ? "var(--mantine-color-orange-1)" : "var(--mantine-color-teal-1)";
                   return (
                     <Paper key={team.value} withBorder p="md" style={{ backgroundColor: bgColor }}>
