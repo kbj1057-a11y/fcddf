@@ -137,7 +137,7 @@ export default function MatchControl() {
     );
   };
 
-  const generateAutoLineup = () => {
+  const generateAutoLineup = async () => {
     const list = attendingPlayers.slice();
     if (list.length < 7) {
       alert("출석자가 7명 이상이어야 자동 라인업을 생성할 수 있습니다.");
@@ -153,6 +153,35 @@ export default function MatchControl() {
       B: { GK: 0, DF: 0, MF: 0, FW: 0 },
     };
 
+    let previousTeam: Record<string, "A" | "B" | "BENCH" | null> = {};
+    try {
+      const { data: prevGames } = await supabase
+        .from("games")
+        .select("id")
+        .eq("match_date", matchDate)
+        .order("played_at", { ascending: false })
+        .limit(1);
+      const prevGameId = prevGames?.[0]?.id;
+      if (prevGameId) {
+        const { data: prevQuarters } = await supabase
+          .from("match_quarters")
+          .select("id")
+          .eq("match_date", matchDate);
+        const qIds = (prevQuarters || []).map((q) => q.id);
+        if (qIds.length) {
+          const { data: prevLineups } = await supabase
+            .from("quarter_lineups")
+            .select("player_id, team")
+            .in("quarter_id", qIds);
+          for (const row of prevLineups || []) {
+            previousTeam[row.player_id] = row.team as "A" | "B" | "BENCH";
+          }
+        }
+      }
+    } catch (e) {
+      console.error("previous lineup load failed", e);
+    }
+
     const sorted = [...list].sort((a, b) => (TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9));
     const counts: Record<"A" | "B", number> = { A: 0, B: 0 };
     let last: "A" | "B" | null = null;
@@ -162,8 +191,17 @@ export default function MatchControl() {
         bench.push(player);
         continue;
       }
-      const pick: "A" | "B" =
-        counts.A >= target ? "B" : counts.B >= target ? "A" : last === "A" ? "B" : "A";
+      const prev = previousTeam[player.id];
+      const preferA = prev === "B";
+      const preferB = prev === "A";
+
+      let pick: "A" | "B";
+      if (counts.A >= target) pick = "B";
+      else if (counts.B >= target) pick = "A";
+      else if (preferB && counts.B < target && last !== "B") pick = "B";
+      else if (preferA && counts.A < target && last !== "A") pick = "A";
+      else pick = last === "A" ? "B" : "A";
+
       last = pick;
       counts[pick] += 1;
       teams[pick].push(player);
