@@ -348,8 +348,6 @@ export default function MatchControl() {
           match_date: matchDate,
           label: resolvedLabel,
           status: "CONFIRMED",
-          teamA_player_count: Object.values(lineups).filter(t => t === "A").length,
-          teamB_player_count: Object.values(lineups).filter(t => t === "B").length,
         })
         .select()
         .single();
