@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Button, Stack, Text, Title, Group, SimpleGrid, Box, Select, Paper, Badge } from "@mantine/core";
+import { Button, Stack, Text, Title, Group, SimpleGrid, Box, Select, Paper, Badge, Modal, ActionIcon, Table, Divider, Grid } from "@mantine/core";
 import { supabase } from "@/lib/supabase";
 import type { Player, Attendance, Game, QuarterLineup, RoleType } from "@/lib/supabase";
 
@@ -30,21 +30,24 @@ export default function MatchControl() {
   const [roles, setRoles] = useState<RoleMap>({});
   const [games, setGames] = useState<Game[]>([]);
   const [completedGame, setCompletedGame] = useState<Game | null>(null);
-  const [completedQuarters, setCompletedQuarters] = useState<{
-    id: string;
-    quarter_number: number;
-    status: string;
-  }[]>([]);
+  const [completedQuarters, setCompletedQuarters] = useState<
+    { id: string; quarter_number: number; status: string }[]
+  >([]);
   const [completedLineups, setCompletedLineups] = useState<QuarterLineup[]>([]);
   const [gameLabel, setGameLabel] = useState<string>("1");
   const [authId, setAuthId] = useState("");
   const [authPw, setAuthPw] = useState("");
   const [authed, setAuthed] = useState(false);
+  const [historyGame, setHistoryGame] = useState<Game | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
   const nextGameLabel = useMemo(() => {
     const nums = games.map((g) => parseInt(g.label || "0", 10)).filter((n) => !Number.isNaN(n));
     const max = nums.reduce((m, n) => Math.max(m, n), 0);
     return String(max + 1);
   }, [games]);
+
+  const playerTodayGameCount: Record<string, number> = {};
 
   const attendingPlayers = useMemo(() => {
     const ranked = attendances
@@ -62,41 +65,45 @@ export default function MatchControl() {
     setLoading(true);
     const { data: playersData } = await supabase.from("players").select("*").order("name");
     setPlayers(playersData || []);
+
     const { data: todayAtt } = await supabase
       .from("attendance")
       .select("*")
       .eq("match_date", matchDate)
       .order("arrival_rank");
     setAttendances(todayAtt || []);
+
     setCompletedQuarters([]);
     setCompletedLineups([]);
     setLoading(false);
   };
 
+  const loadGames = async () => {
+    const { data } = await supabase.from("games").select("*").eq("match_date", matchDate).order("label");
+    setGames(data || []);
+  };
+
   const markAttendance = async (playerId: string, status: Attendance["status"]) => {
-    await supabase
-      .from("attendance")
-      .upsert(
-        { match_date: matchDate, player_id: playerId, status, arrival_time: new Date().toISOString() },
-        { onConflict: "match_date,player_id" }
-      );
+    const existing = attendances.find((a) => a.player_id === playerId);
+    const existingRank = existing?.arrival_rank;
+    const isAttending = existing?.status === "ATTENDING";
+    const newRank =
+      status === "ATTENDING" && !isAttending && existingRank == null
+        ? attendances.filter((a) => a.status === "ATTENDING").length + 1
+        : existingRank ?? attendances.filter((a) => a.status === "ATTENDING").length + 1;
+
+    await supabase.from("attendance").upsert(
+      {
+        match_date: matchDate,
+        player_id: playerId,
+        status,
+        arrival_time: new Date().toISOString(),
+        arrival_rank: newRank,
+      },
+      { onConflict: "match_date,player_id" }
+    );
     setAttendances((prev) => {
       const next = prev.filter((a) => a.player_id !== playerId);
-      if (status !== "ATTENDING") {
-        return [
-          ...next,
-          {
-            id: playerId,
-            match_date: matchDate,
-            player_id: playerId,
-            arrival_time: new Date().toISOString(),
-            status,
-            exit_time: null,
-            arrival_rank: null,
-          } as Attendance,
-        ];
-      }
-      const rank = next.filter((a) => a.status === "ATTENDING").length + 1;
       return [
         ...next,
         {
@@ -105,8 +112,8 @@ export default function MatchControl() {
           player_id: playerId,
           arrival_time: new Date().toISOString(),
           status,
+          arrival_rank: status === "ATTENDING" ? newRank : null,
           exit_time: null,
-          arrival_rank: rank,
         } as Attendance,
       ];
     });
@@ -138,6 +145,7 @@ export default function MatchControl() {
   };
 
   const generateAutoLineup = async () => {
+    await loadGames();
     const list = attendingPlayers.slice();
     if (list.length < 7) {
       alert("출석자가 7명 이상이어야 자동 라인업을 생성할 수 있습니다.");
@@ -155,29 +163,31 @@ export default function MatchControl() {
 
     const previousInfo: Record<string, { team: string; role: string }> = {};
     try {
-      const { data: prevGames } = await supabase
-        .from("games")
-        .select("id")
-        .eq("match_date", matchDate)
-        .order("played_at", { ascending: false })
-        .limit(1);
-      const prevGameId = prevGames?.[0]?.id;
-      if (prevGameId) {
-        const { data: prevQuarters } = await supabase
-          .from("match_quarters")
+      if (!games[games.length - 1]) {
+        const { data: prevGames } = await supabase
+          .from("games")
           .select("id")
-          .eq("match_date", matchDate);
-        const qIds = (prevQuarters || []).map((q) => q.id);
+          .eq("match_date", matchDate)
+          .order("played_at", { ascending: false })
+          .limit(1);
+        const prevGameId = prevGames?.[0]?.id;
+        if (prevGameId) {
+          const { data: prevQuarters } = await supabase.from("match_quarters").select("id").eq("match_date", matchDate);
+          const qIds = (prevQuarters || []).map((q) => q.id);
+          if (qIds.length) {
+            const { data: prevLineups } = await supabase.from("quarter_lineups").select("player_id, team, position").in("quarter_id", qIds);
+            for (const row of prevLineups || []) {
+              previousInfo[row.player_id] = { team: row.team, role: row.position ?? "player" };
+            }
+          }
+        }
+      } else {
+        const { data: quarters } = await supabase.from("match_quarters").select("id").eq("match_date", matchDate);
+        const qIds = (quarters || []).map((q) => q.id);
         if (qIds.length) {
-          const { data: prevLineups } = await supabase
-            .from("quarter_lineups")
-            .select("player_id, team, position")
-            .in("quarter_id", qIds);
+          const { data: prevLineups } = await supabase.from("quarter_lineups").select("player_id, team, position").in("quarter_id", qIds);
           for (const row of prevLineups || []) {
-            previousInfo[row.player_id] = {
-              team: row.team,
-              role: row.position ?? "player",
-            };
+            previousInfo[row.player_id] = { team: row.team, role: row.position ?? "player" };
           }
         }
       }
@@ -275,6 +285,10 @@ export default function MatchControl() {
         nextLineups[p.id] = teamKey;
         nextRoles[p.id] = (seatedRoles[p.id] ?? "player") as RoleType;
       }
+      for (const p of gkReady) {
+        nextLineups[p.id] = teamKey;
+        nextRoles[p.id] = "GK";
+      }
     }
 
     for (const p of bench) {
@@ -302,13 +316,21 @@ export default function MatchControl() {
         .eq("match_date", matchDate)
         .eq("label", resolvedLabel)
         .maybeSingle();
-      if (existErr) { console.error("games check", existErr); alert("게임 확인 실패: " + existErr.message); setLoading(false); return; }
+      if (existErr) {
+        console.error("games check", existErr);
+        alert("게임 확인 실패: " + existErr.message);
+        setLoading(false);
+        return;
+      }
 
       if (existing?.id) {
         const ok = window.confirm(
           `이미 ${matchDate} ${resolvedLabel} 게임이 저장되어 있습니다.\n덮어쓰면 기존 데이터가 백업 후 삭제됩니다.\n계속할까요?`
         );
-        if (!ok) { setLoading(false); return; }
+        if (!ok) {
+          setLoading(false);
+          return;
+        }
 
         const { data: existingGame } = await supabase.from("games").select("*").eq("id", existing.id).single();
         const { data: existingQuarters } = await supabase.from("match_quarters").select("*").eq("match_date", matchDate);
@@ -317,29 +339,20 @@ export default function MatchControl() {
           ? await supabase.from("quarter_lineups").select("*").in("quarter_id", qIds)
           : { data: [] };
 
-        const { error: backupGameErr } = await supabase.from("games_backup").insert({ ...existingGame, backup_at: new Date().toISOString() });
-        if (backupGameErr && !backupGameErr.message.includes("duplicate")) console.error("games_backup insert", backupGameErr);
-
+        await supabase.from("games_backup").insert({ ...existingGame, backup_at: new Date().toISOString() });
         if (existingQuarters && existingQuarters.length) {
-          const { error: backupQErr } = await supabase.from("match_quarters_backup").insert(
+          await supabase.from("match_quarters_backup").insert(
             existingQuarters.map((q) => ({ ...q, backup_at: new Date().toISOString() }))
           );
-          if (backupQErr && !backupQErr.message.includes("duplicate")) console.error("match_quarters_backup insert", backupQErr);
         }
-
         if (existingLineups && existingLineups.length) {
-          const { error: backupLineErr } = await supabase.from("quarter_lineups_backup").insert(
+          await supabase.from("quarter_lineups_backup").insert(
             existingLineups.map((r) => ({ ...r, backup_at: new Date().toISOString() }))
           );
-          if (backupLineErr && !backupLineErr.message.includes("duplicate")) console.error("quarter_lineups_backup insert", backupLineErr);
         }
-
-        const { error: delLineErr } = await supabase.from("quarter_lineups").delete().in("quarter_id", qIds.length ? qIds : [""]);
-        if (delLineErr) console.error("quarter_lineups delete", delLineErr);
-        const { error: delQErr } = await supabase.from("match_quarters").delete().eq("match_date", matchDate);
-        if (delQErr) console.error("match_quarters delete", delQErr);
-        const { error: delGameErr } = await supabase.from("games").delete().eq("id", existing.id);
-        if (delGameErr) console.error("games delete", delGameErr);
+        await supabase.from("quarter_lineups").delete().in("quarter_id", qIds.length ? qIds : [""]);
+        await supabase.from("match_quarters").delete().eq("match_date", matchDate);
+        await supabase.from("games").delete().eq("id", existing.id);
       }
 
       const { data: game, error: gameErr } = await supabase
@@ -347,8 +360,17 @@ export default function MatchControl() {
         .upsert({ id: completedGame?.id, played_at: new Date().toISOString(), match_date: matchDate, label: resolvedLabel, status: "COMPLETED" })
         .select()
         .single();
-      if (gameErr) { console.error("games insert", gameErr); alert("게임 저장 실패: " + gameErr.message); setLoading(false); return; }
-      if (!game) { console.error("games insert no data"); setLoading(false); return; }
+      if (gameErr) {
+        console.error("games insert", gameErr);
+        alert("게임 저장 실패: " + gameErr.message);
+        setLoading(false);
+        return;
+      }
+      if (!game) {
+        console.error("games insert no data");
+        setLoading(false);
+        return;
+      }
 
       for (let q = 1; q <= 4; q++) {
         const { data: quarter, error: qErr } = await supabase
@@ -356,8 +378,17 @@ export default function MatchControl() {
           .insert({ match_date: matchDate, quarter_number: q, status: "COMPLETED" })
           .select()
           .single();
-        if (qErr) { console.error("match_quarters insert", qErr); alert("쿼터 저장 실패: " + qErr.message); setLoading(false); return; }
-        if (!quarter) { console.error("match_quarters insert no data"); setLoading(false); return; }
+        if (qErr) {
+          console.error("match_quarters insert", qErr);
+          alert("쿼터 저장 실패: " + qErr.message);
+          setLoading(false);
+          return;
+        }
+        if (!quarter) {
+          console.error("match_quarters insert no data");
+          setLoading(false);
+          return;
+        }
 
         const rows = Object.entries(lineups).map(([playerId, team]) => {
           const role = roles[playerId] ?? "player";
@@ -378,13 +409,32 @@ export default function MatchControl() {
           };
         });
         const { error: qlErr } = await supabase.from("quarter_lineups").insert(rows);
-        if (qlErr) { console.error("quarter_lineups insert", qlErr); alert("라인업 저장 실패: " + qlErr.message); setLoading(false); return; }
+        if (qlErr) {
+          console.error("quarter_lineups insert", qlErr);
+          alert("라인업 저장 실패: " + qlErr.message);
+          setLoading(false);
+          return;
+        }
       }
 
       alert("저장 완료");
-      setGames((prev) =>
-        existing?.id ? prev.map((g) => (g.id === existing.id ? game : g)) : [...prev, game]
-      );
+      setGames((prev) => [...prev, game]);
+      setGameLabel(nextGameLabel);
+      resetLineup();
+      await loadGames();
+
+      const { data: qs } = await supabase.from("match_quarters").select("id").eq("match_date", matchDate);
+      const qIds = (qs || []).map((q) => q.id);
+      if (qIds.length) {
+        const { data: lineups } = await supabase.from("quarter_lineups").select("player_id").in("quarter_id", qIds);
+        const playedIds = new Set((lineups || []).map((r) => r.player_id));
+        for (const pid of playedIds) {
+          const player = players.find((p) => p.id === pid);
+          if (!player) continue;
+          await supabase.from("players").update({ today_game_count: (player.today_game_count ?? 0) + 1 }).eq("id", pid);
+        }
+      }
+      await loadPlayers();
     } finally {
       setLoading(false);
     }
@@ -400,10 +450,7 @@ export default function MatchControl() {
       .eq("match_date", matchDate)
       .order("quarter_number");
     const quarterIds = (quarters || []).map((q) => q.id);
-    const { data: lineupRows } = await supabase
-      .from("quarter_lineups")
-      .select("*")
-      .in("quarter_id", quarterIds.length ? quarterIds : [""]);
+    const { data: lineupRows } = await supabase.from("quarter_lineups").select("*").in("quarter_id", quarterIds.length ? quarterIds : [""]);
     setCompletedQuarters(quarters || []);
     setCompletedLineups(lineupRows || []);
     setLoading(false);
@@ -419,7 +466,12 @@ export default function MatchControl() {
         .from("games")
         .select("*")
         .eq("match_date", matchDate);
-      if (listErr) { console.error("today games list", listErr); alert("오늘 게임 조회 실패"); setLoading(false); return; }
+      if (listErr) {
+        console.error("today games list", listErr);
+        alert("오늘 게임 조회 실패");
+        setLoading(false);
+        return;
+      }
 
       const saved = todayGames?.length || 0;
       const { data: existingGame } = await supabase.from("games").select("id").eq("match_date", matchDate).limit(1);
@@ -432,7 +484,10 @@ export default function MatchControl() {
       const proceed = window.confirm(
         `오늘(${matchDate}) 저장된 게임 ${saved}개를 메인 서버로 동기화합니다.\n이미 저장된 데이터가 있으면 중복 동기화 될 수 있습니다.\n계속할까요?`
       );
-      if (!proceed) { setLoading(false); return; }
+      if (!proceed) {
+        setLoading(false);
+        return;
+      }
 
       alert(`오늘하루 확정 완료: ${matchDate} / ${saved}게임 동기화됨`);
       setGames(todayGames || []);
@@ -444,6 +499,64 @@ export default function MatchControl() {
   const resetLineup = () => {
     setLineups({});
     setRoles({});
+  };
+
+  const openHistory = async (game: Game) => {
+    setHistoryGame(game);
+    setHistoryOpen(true);
+    await openGameDetail(game);
+  };
+
+  const loadHistoryLineup = async () => {
+    if (!historyGame) return;
+    setLoading(true);
+    const { data: quarters } = await supabase.from("match_quarters").select("*").eq("match_date", matchDate).eq("label", historyGame.label);
+    const quarterIds = (quarters || []).map((q) => q.id);
+    const { data: lineupRows } = quarterIds.length
+      ? await supabase.from("quarter_lineups").select("*").in("quarter_id", quarterIds)
+      : { data: [] };
+    const nextLineups: TeamMap = {};
+    const nextRoles: RoleMap = {};
+    for (const row of lineupRows || []) {
+      nextLineups[row.player_id] = row.team as "A" | "B" | "BENCH";
+      if (row.position === "FW" || row.position === "MF" || row.position === "DF" || row.position === "GK" || row.position === "주심" || row.position === "부심") {
+        const roleMap: Record<string, RoleType> = { "FW": "FW", "MF": "MF", "DF": "DF", "GK": "GK", "주심": "referee", "부심": "assistant_referee" };
+        nextRoles[row.player_id] = roleMap[row.position] || "player";
+      } else {
+        nextRoles[row.player_id] = row.position === "BENCH" ? "player" : "player";
+      }
+    }
+    setLineups(nextLineups);
+    setRoles(nextRoles);
+    setGameLabel(historyGame.label || "1");
+    setHistoryOpen(false);
+    setHistoryGame(null);
+    setStep("LINEUP");
+    setLoading(false);
+  };
+
+  const deleteHistoryGame = async () => {
+    if (!historyGame) return;
+    const ok = window.confirm(`${historyGame.label} 게임을 삭제할까요?\n백업 테이블에만 남습니다.`);
+    if (!ok) return;
+    const { data: qs } = await supabase.from("match_quarters").select("id").eq("match_date", matchDate);
+    if (qs?.length) {
+      const qIds = qs.map((q) => q.id);
+      await supabase.from("quarter_lineups").delete().in("quarter_id", qIds);
+    }
+    await supabase.from("match_quarters").delete().eq("match_date", matchDate);
+    await supabase.from("games").delete().eq("id", historyGame.id);
+    setHistoryOpen(false);
+    setHistoryGame(null);
+    await loadGames();
+    await loadPlayers();
+  };
+
+  const deleteGameById = async (gameId: string) => {
+    const ok = window.confirm("게임을 삭제할까요?");
+    if (!ok) return;
+    await supabase.from("games").delete().eq("id", gameId);
+    await loadGames();
   };
 
   return (
@@ -499,337 +612,309 @@ export default function MatchControl() {
               type="text"
               value={gameLabel}
               onChange={(e) => setGameLabel(e.target.value)}
-              placeholder="게임번호"
-              className="border rounded px-3 py-3 text-black w-24"
+              className="border rounded px-3 py-2 text-black w-24"
+              placeholder="게임 번호"
             />
-            <Text size="sm" c="dimmed">
-              다음 예정: {nextGameLabel}게임
-            </Text>
-            <Button onClick={loadPlayers} disabled={loading} size="lg">
-              선수 불러오기
+            <Button onClick={loadPlayers}>데이터 불러오기</Button>
+            <Button onClick={loadGames}>게임 불러오기</Button>
+          </Group>
+
+          <Group gap="xs">
+            <Button
+              variant={step === "ATTENDANCE" ? "filled" : "light"}
+              onClick={() => setStep("ATTENDANCE")}
+            >
+              출석
+            </Button>
+            <Button
+              variant={step === "LINEUP" ? "filled" : "light"}
+              onClick={() => setStep("LINEUP")}
+            >
+              라인업
+            </Button>
+            <Button
+              variant={step === "CONFIRM" ? "filled" : "light"}
+              onClick={() => setStep("CONFIRM")}
+            >
+              확정
             </Button>
           </Group>
 
-          <Group gap="sm">
-            <Button variant="light" onClick={() => setStep("ATTENDANCE")}>출석</Button>
-            <Button variant="light" onClick={() => setStep("LINEUP")}>라인업</Button>
-            <Button variant="light" onClick={() => setStep("CONFIRM")}>확정</Button>
-          </Group>
-
           {step === "ATTENDANCE" && (
-            <Stack gap="sm">
-              <Group justify="space-between">
-                <Title order={3}>출석 체크</Title>
-                <Button size="xs" variant="light" color="red" onClick={resetAttendance}>리셋</Button>
+            <Paper withBorder p="md">
+              <Group justify="space-between" mb="xs">
+                <Title order={4}>출석 체크</Title>
+                <Button size="xs" color="red" onClick={resetAttendance}>
+                  리셋
+                </Button>
               </Group>
-              <Text size="sm" c="dimmed">기본: 결석 / 참가 버튼으로 전환</Text>
-              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="xs">
                 {players.map((p) => {
                   const att = attendances.find((a) => a.player_id === p.id);
                   const status = att?.status === "ATTENDING" ? "ATTENDING" : "ABSENT";
                   return (
-                    <Group key={p.id} justify="space-between" className="border rounded p-3">
-                      <Text>{p.name}</Text>
-                      <Group gap="xs">
-                        <Button
-                          size="xs"
-                          color={status === "ATTENDING" ? "green" : "gray"}
-                          onClick={() => markAttendance(p.id, status === "ATTENDING" ? "ABSENT" : "ATTENDING")}
-                        >
-                          {status === "ATTENDING" ? "참가" : "결석"}
-                        </Button>
-                        {status === "ATTENDING" && (
-                          <Badge variant="light" color="yellow">
-                            {att?.arrival_rank != null ? `#${att.arrival_rank}` : "순서미정"}
-                          </Badge>
-                        )}
-                      </Group>
-                    </Group>
-                  );
-                })}
-              </SimpleGrid>
-            </Stack>
-          )}
-
-          {step === "LINEUP" && (
-            <Stack gap="md">
-              <Group justify="space-between">
-                <Box>
-                  <Title order={3}>라인업</Title>
-                  <Text size="sm" c="dimmed">
-                    출석자 {attendingPlayers.length}명
-                  </Text>
-                </Box>
-                <Group gap="xs">
-                  <Button onClick={generateAutoLineup}>자동 라인업 생성</Button>
-                  <Button variant="light" color="orange" onClick={resetLineup}>라인업 초기화</Button>
-                  <Button variant="light" color="red" onClick={() => setStep("CONFIRM")}>확정</Button>
-                </Group>
-              </Group>
-              <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                {TEAMS.map((team) => {
-                  const members = attendingPlayers.filter((p) => lineups[p.id] === team.value);
-                  const ordered = [...members].sort((a, b) => {
-                    const order: Record<string, number> = { FW: 0, MF: 1, DF: 2, GK: 3, referee: 4, assistant_referee: 5, player: 6 };
-                    return (order[roles[a.id] ?? "player"] ?? 99) - (order[roles[b.id] ?? "player"] ?? 99);
-                  });
-                  const bgColor = team.value === "A" ? "var(--mantine-color-orange-1)" : "var(--mantine-color-teal-1)";
-                  const darkBg = team.value === "A" ? "var(--mantine-color-orange-9)" : "var(--mantine-color-teal-9)";
-                  return (
-                    <Paper key={team.value} withBorder p="md" style={{ backgroundColor: bgColor }}>
-                      <Group justify="space-between">
-                        <Text fw={700}>{team.label}</Text>
-                        <Text size="sm" c="dimmed">{ordered.length}명</Text>
-                      </Group>
-                      <Stack gap="xs" mt="sm">
-                        {ordered.map((p) => {
-                          const role = roles[p.id];
-                          const isDark =
-                            role === "gk" ||
-                            role === "GK" ||
-                            role === "referee" ||
-                            role === "assistant_referee";
-                          const rowBg = isDark ? darkBg : "transparent";
-                          const nameColor = isDark ? "#fff" : "#000";
-                          const roleLabel =
-                            role === "referee"
-                              ? "주심"
-                              : role === "assistant_referee"
-                                ? "부심"
-                                : role === "gk" || role === "GK"
-                                  ? "GK"
-                                  : role === "FW" || role === "MF" || role === "DF"
-                                    ? role
-                                    : "선수";
-                          const positionValue = role === "player" || !role ? "player" : role;
-                          const teamOptions = [
-                            { value: team.value, label: teamLabel(team.value) },
-                            { value: team.value === "A" ? "B" : "A", label: teamLabel(team.value === "A" ? "B" : "A") },
-                            { value: "BENCH", label: "휴식" },
-                          ];
-                          return (
-                            <Group key={p.id} gap="xs" wrap="wrap" p="xs" style={{ backgroundColor: rowBg, borderRadius: 6 }}>
-                              <Text size="sm" className="min-w-20" style={{ color: nameColor, fontWeight: 600 }}>
-                                {p.name}
-                              </Text>
-                              <Select
-                                size="xs"
-                                data={teamOptions}
-                                value={lineups[p.id]}
-                                onChange={(val) => setTeam(p.id, val as "A" | "B" | "BENCH")}
-                                className="w-28"
-                                styles={{ dropdown: { zIndex: 9999 } }}
-                              />
-                              <Select
-                                size="xs"
-                                data={[
-                                  { value: "player", label: "선수" },
-                                  { value: "FW", label: "FW" },
-                                  { value: "MF", label: "MF" },
-                                  { value: "DF", label: "DF" },
-                                  { value: "GK", label: "GK" },
-                                  { value: "referee", label: "주심" },
-                                  { value: "assistant_referee", label: "부심" },
-                                ]}
-                                value={positionValue}
-                                onChange={(val) => {
-                                  const v = val ?? "player";
-                                  if (v === "referee" || v === "assistant_referee" || v === "GK" || v === "gk") {
-                                    if (v === "GK") setPlayerRole(p.id, "GK");
-                                    else setPlayerRole(p.id, v as RoleType);
-                                    setTeam(p.id, "BENCH");
-                                  } else {
-                                    setPlayerRole(p.id, v as RoleType);
-                                    setTeam(p.id, team.value);
-                                  }
-                                }}
-                                className="w-28"
-                                styles={{ dropdown: { zIndex: 9999 } }}
-                              />
-                              <Badge color={isDark ? "light" : "gray"} variant={isDark ? "filled" : "light"}>{roleLabel}</Badge>
-                            </Group>
-                          );
-                        })}
-                      </Stack>
+                    <Paper withBorder p="xs" key={p.id}>
+                      <Text size="sm">{p.name}</Text>
+                      <Text size="xs" c="dimmed">
+                        도착순: {att?.arrival_rank ?? "-"}
+                      </Text>
+                      <Button
+                        size="xs"
+                        color={status === "ATTENDING" ? "green" : "red"}
+                        onClick={() =>
+                          markAttendance(p.id, status === "ATTENDING" ? "ABSENT" : "ATTENDING")
+                        }
+                      >
+                        {status === "ATTENDING" ? "참가" : "결석"}
+                      </Button>
                     </Paper>
                   );
                 })}
-                <Paper withBorder p="md">
-                  <Text fw={600}>배치/역할</Text>
-                  <Text size="sm" c="dimmed" mt="xs">주황/블랙/연두/흰색/주심/부심/GK/휴식 중 선택</Text>
-                  <Stack gap="xs" mt="sm">
-                    {attendingPlayers
-                      .filter((p) => lineups[p.id] === "BENCH" || !lineups[p.id])
-                      .map((p) => {
-                        const role = roles[p.id];
-                        const combined =
-                          role === "referee"
-                            ? "주심"
-                            : role === "assistant_referee"
-                              ? "부심"
-                              : role === "gk" || role === "GK"
-                                ? "GK"
-                                : lineups[p.id] === "A"
-                                  ? "주황/블랙"
-                                  : lineups[p.id] === "B"
-                                    ? "연두/흰색"
-                                    : "휴식";
-                        const currentValue =
-                          lineups[p.id] === "A"
-                            ? "A"
-                            : lineups[p.id] === "B"
-                              ? "B"
-                              : role === "referee"
-                                ? "referee"
-                                : role === "assistant_referee"
-                                  ? "assistant_referee"
-                                  : role === "gk" || role === "GK"
-                                    ? "gk"
-                                    : "BENCH";
-                        return (
-                          <Group key={p.id} gap="xs" wrap="wrap">
-                            <Text size="sm" className="min-w-20">{p.name}</Text>
-                            <Select
-                              size="xs"
-                              data={[
-                                { value: "A", label: "주황/블랙" },
-                                { value: "B", label: "연두/흰색" },
-                                { value: "referee", label: "주심" },
-                                { value: "assistant_referee", label: "부심" },
-                                { value: "gk", label: "GK" },
-                                { value: "BENCH", label: "휴식" },
-                              ]}
-                              value={currentValue}
-                              onChange={(val) => {
-                                const v = val ?? "BENCH";
-                                if (v === "A" || v === "B") {
-                                  setTeam(p.id, v as "A" | "B");
-                                  setPlayerRole(p.id, "player");
-                                } else if (v === "referee") {
-                                  setTeam(p.id, "BENCH");
-                                  setPlayerRole(p.id, "referee");
-                                } else if (v === "assistant_referee") {
-                                  setTeam(p.id, "BENCH");
-                                  setPlayerRole(p.id, "assistant_referee");
-                                } else if (v === "gk") {
-                                  setTeam(p.id, "BENCH");
-                                  setPlayerRole(p.id, "gk");
-                                } else {
-                                  setTeam(p.id, "BENCH");
-                                  setPlayerRole(p.id, "player");
-                                }
-                              }}
-                              className="w-36"
-                              styles={{ dropdown: { zIndex: 9999 } }}
-                            />
-                            <Badge color="gray">{combined}</Badge>
-                          </Group>
-                        );
-                      })}
-                  </Stack>
-                </Paper>
               </SimpleGrid>
-            </Stack>
+            </Paper>
+          )}
+
+          {step === "LINEUP" && (
+            <Paper withBorder p="md">
+              <Title order={4}>라인업</Title>
+              <Group mb="xs">
+                <Button size="xs" onClick={generateAutoLineup}>
+                  자동 라인업 생성
+                </Button>
+                <Button size="xs" variant="light" color="red" onClick={resetLineup}>
+                  라인업 초기화
+                </Button>
+              </Group>
+              <Grid mb="xs">
+                <Grid.Col span={4}>
+                  <Text size="sm" fw={500}>주황/블랙</Text>
+                  <Text size="xs" c="dimmed">인원: {Object.values(lineups).filter((t) => t === "A").length}</Text>
+                  <TeamList
+                    team="A"
+                    players={players}
+                    lineups={lineups}
+                    roles={roles}
+                    setTeam={setTeam}
+                    setPlayerRole={setPlayerRole}
+                    bg="orange"
+                  />
+                </Grid.Col>
+                <Grid.Col span={4}>
+                  <Text size="sm" fw={500}>연두/흰색</Text>
+                  <Text size="xs" c="dimmed">인원: {Object.values(lineups).filter((t) => t === "B").length}</Text>
+                  <TeamList
+                    team="B"
+                    players={players}
+                    lineups={lineups}
+                    roles={roles}
+                    setTeam={setTeam}
+                    setPlayerRole={setPlayerRole}
+                    bg="teal"
+                  />
+                </Grid.Col>
+                <Grid.Col span={4}>
+                  <Text size="sm" fw={500}>벤치</Text>
+                  <Text size="xs" c="dimmed">인원: {Object.values(lineups).filter((t) => t === "BENCH").length}</Text>
+                  <TeamList
+                    team="BENCH"
+                    players={players}
+                    lineups={lineups}
+                    roles={roles}
+                    setTeam={setTeam}
+                    setPlayerRole={setPlayerRole}
+                    bg="gray"
+                  />
+                </Grid.Col>
+              </Grid>
+            </Paper>
           )}
 
           {step === "CONFIRM" && (
-            <Stack gap="md">
-              <Title order={3}>확정</Title>
-              <Text>게임: {gameLabel}</Text>
-              <Button size="xl" color="green" onClick={saveGame} disabled={loading}>
-                {loading ? "저장 중..." : `${gameLabel}게임 확정 저장`}
-              </Button>
-              <Button variant="light" color="blue" onClick={saveTodayGames} disabled={loading}>
-                오늘하루 확정저장
-              </Button>
-              <Group gap="sm">
-                <Button variant="light" onClick={() => openGameDetail(undefined)}>오늘 하루 보기</Button>
+            <Paper withBorder p="md">
+              <Title order={4}>확정</Title>
+              <Group mb="xs">
+                <Text size="sm">
+                  다음 게임: {nextGameLabel}
+                </Text>
               </Group>
-              <Stack gap="sm">
-                {games.map((g) => (
-                  <Group key={g.id} gap="sm" className="border rounded p-3">
-                    <Text
-                      style={{ cursor: "pointer", textDecoration: "underline" }}
-                      onClick={() => { setCompletedGame(g); openGameDetail(g); }}
-                    >
+              <Group mb="xs">
+                <Button onClick={saveGame} disabled={Object.keys(lineups).length === 0}>
+                  {nextGameLabel}게임 확정저장
+                </Button>
+              </Group>
+
+              <Divider label="오늘 하루 보기" labelPosition="center" my="md" />
+              <SimpleGrid cols={3} spacing="xs">
+                {[...games].reverse().map((g) => (
+                  <Paper withBorder p="xs" key={g.id} style={{ cursor: "pointer" }} onClick={() => openHistory(g)}>
+                    <Text size="sm" fw={500}>
                       {g.label}게임
                     </Text>
-                    <Badge color="green">{g.status}</Badge>
-                  </Group>
+                    <Text size="xs" c="dimmed">{g.match_date}</Text>
+                    <Text size="xs" c="dimmed" onClick={() => openHistory(g)}>
+                      보기 | 삭제 버튼
+                    </Text>
+                    <Group gap="xs" mt="xs">
+                      <ActionIcon size="xs" variant="light" color="blue" onClick={() => openHistory(g)}>
+                        보기
+                      </ActionIcon>
+                      <ActionIcon size="xs" variant="light" color="red" onClick={() => deleteGameById(g.id)}>
+                        삭제
+                      </ActionIcon>
+                    </Group>
+                  </Paper>
                 ))}
-              </Stack>
-              {completedQuarters.length > 0 && (
-                <Paper withBorder p="md">
-                  <Stack gap="xs">
-                    <Text fw={600}>쿼터별 라인업</Text>
-                    {completedQuarters.map((q) => (
-                      <Box key={q.id}>
-                        <Text fw={500}>{q.quarter_number}Q</Text>
-                        <SimpleGrid cols={{ base: 1, sm: 3 }}>
-                          {TEAMS.map((team) => {
-                            const members = completedLineups
-                              .filter((l) => l.quarter_id === q.id && l.team === team.value)
-                              .map((l) => {
-                                const p = players.find((pl) => pl.id === l.player_id);
-                                if (l.is_gk) return `${p?.name ?? l.player_id} (GK)`;
-                                if (l.referee) return `${p?.name ?? l.player_id} (주심)`;
-                                if (l.assistant_referee) return `${p?.name ?? l.player_id} (부심)`;
-                                return p?.name ?? l.player_id;
-                              });
-                            return (
-                              <Box key={team.value}>
-                                <Text size="sm" fw={500}>{teamLabel(team.value)}</Text>
-                                <Text size="sm">{members.join(", ") || "-"}</Text>
-                              </Box>
-                            );
-                          })}
-                        </SimpleGrid>
-                      </Box>
-                    ))}
-                  </Stack>
-                </Paper>
-              )}
-            </Stack>
+              </SimpleGrid>
+              <Group mt="md">
+                <Button onClick={saveTodayGames}>오늘하루 확정저장</Button>
+              </Group>
+            </Paper>
           )}
         </>
       )}
+
+      <Modal
+        opened={historyOpen && !!historyGame}
+        onClose={() => {
+          setHistoryOpen(false);
+          setHistoryGame(null);
+        }}
+        title={`${historyGame?.label}게임 상세`}
+        size="lg"
+      >
+        {historyGame && (
+          <Stack gap="xs">
+            <Title order={5}>{historyGame.label}게임 상세</Title>
+            {(completedQuarters || []).length === 0 && (
+              <Text size="sm" c="dimmed">라인업 정보가 없습니다.</Text>
+            )}
+            {(completedQuarters || []).map((q) => {
+              const qLineups = completedLineups.filter((rl) => rl.quarter_id === q.id);
+              return (
+                <Paper key={q.id} withBorder p="xs">
+                  <Text size="sm" fw={500}>쿼터 {q.quarter_number}</Text>
+                  <Stack gap={4}>
+                    {qLineups.map((rl) => {
+                      const p = players.find((pl) => pl.id === rl.player_id);
+                      return (
+                        <Group key={rl.id} gap="xs">
+                          <Text size="sm">{p?.name ?? "-"}</Text>
+                          <Badge size="xs">{rl.position ?? "-"}</Badge>
+                        </Group>
+                      );
+                    })}
+                    {qLineups.length === 0 && <Text size="xs" c="dimmed">-</Text>}
+                  </Stack>
+                </Paper>
+              );
+            })}
+            <Group>
+              <Button size="xs" onClick={loadHistoryLineup}>수정</Button>
+              <Button size="xs" color="red" onClick={deleteHistoryGame}>삭제</Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
     </Stack>
   );
 }
 
 function AddPlayerForm({ onAdded }: { onAdded: (p: Player) => void }) {
   const [name, setName] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const submit = async () => {
-    if (!name.trim()) return alert("이름을 입력하세요.");
-    setSaving(true);
+    if (!name.trim()) return;
+    setLoading(true);
     const { data, error } = await supabase
       .from("players")
-      .insert({ name: name.trim(), phone_last4: "0000", tier: "B" })
+      .insert([{ name: name.trim() }])
       .select()
       .single();
-    setSaving(false);
-    if (error) return alert("저장 실패: " + error.message);
-    if (data) {
-      onAdded(data);
-      setName("");
+    if (error) {
+      console.error("player insert", error);
+      alert("선수 추가 실패: " + error.message);
+      setLoading(false);
+      return;
     }
+    if (data) onAdded(data as Player);
+    setName("");
+    setLoading(false);
   };
 
   return (
-    <Stack gap="xs">
-      <Group gap="xs">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="이름"
-          className="border rounded px-3 py-2 text-black"
-        />
-        <Button onClick={submit} disabled={saving} size="xs">
-          추가
-        </Button>
-      </Group>
+    <Group>
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="이름" className="border rounded px-3 py-2 text-black" />
+      <Button onClick={submit} loading={loading} disabled={!name.trim()}>
+        추가
+      </Button>
+    </Group>
+  );
+}
+
+function TeamList({
+  team,
+  players,
+  lineups,
+  roles,
+  setTeam,
+  setPlayerRole,
+  bg,
+}: {
+  team: "A" | "B" | "BENCH";
+  players: Player[];
+  lineups: TeamMap;
+  roles: RoleMap;
+  setTeam: (id: string, team: "A" | "B" | "BENCH") => void;
+  setPlayerRole: (id: string, role: RoleType) => void;
+  bg: string;
+}) {
+  return (
+    <Stack gap={4} mt="xs">
+      {players.map((p) => {
+        const assigned = lineups[p.id];
+        if (assigned !== team) return null;
+        const isGK = ["GK", "주심", "부심"].includes(roles[p.id] || "player");
+        return (
+          <Paper
+            key={p.id}
+            withBorder
+            p="xs"
+            style={{ backgroundColor: isGK ? "#333" : undefined }}
+          >
+            <Group gap="xs" wrap="nowrap">
+              <Text size="sm" c={isGK ? "white" : "black"}>
+                {p.name}
+              </Text>
+              {p.today_game_count ? (
+                <Badge size="xs" circle>{p.today_game_count}</Badge>
+              ) : null}
+              <Select
+                size="xs"
+                data={[
+                  { value: "주황/블랙", label: "주황/블랙" },
+                  { value: "연두/흰색", label: "연두/흰색" },
+                  { value: "주심", label: "주심" },
+                  { value: "부심", label: "부심" },
+                  { value: "GK", label: "GK" },
+                  { value: "휴식", label: "휴식" },
+                ]}
+                value={roles[p.id] || (team === "BENCH" ? "휴식" : "player")}
+                onChange={(v) => {
+                  if (v === "주황/블랙") setTeam(p.id, "A");
+                  else if (v === "연두/흰색") setTeam(p.id, "B");
+                  else if (v === "휴식") setTeam(p.id, "BENCH");
+                  else if (v === "주심") { setTeam(p.id, "A"); setPlayerRole(p.id, "referee"); }
+                  else if (v === "부심") { setTeam(p.id, "A"); setPlayerRole(p.id, "assistant_referee"); }
+                  else if (v === "GK") { setTeam(p.id, "A"); setPlayerRole(p.id, "GK"); }
+                  else setPlayerRole(p.id, (v as RoleType) || "player");
+                }}
+                w={110}
+              />
+            </Group>
+          </Paper>
+        );
+      })}
     </Stack>
   );
 }

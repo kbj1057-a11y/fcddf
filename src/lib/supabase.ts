@@ -13,6 +13,7 @@ export type Player = {
   is_guest: boolean;
   tier: "S" | "A" | "B" | "C";
   created_at: string;
+  today_game_count?: number;
 };
 
 export type Attendance = {
@@ -49,6 +50,7 @@ export type QuarterLineup = {
 export type Game = {
   id: string;
   played_at: string;
+  match_date: string;
   label: string | null;
   status: "WAITING" | "IN_PROGRESS" | "COMPLETED";
   created_at: string;
