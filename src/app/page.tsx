@@ -462,15 +462,30 @@ export default function MatchControl() {
                               ? "주심"
                               : role === "assistant_referee"
                                 ? "부심"
-                                : role === "gk"
+                                : role === "gk" || role === "GK"
                                   ? "GK"
-                                  : role;
-                          const positionValue = role === "player" ? "player" : role;
+                                  : role === "FW" || role === "MF" || role === "DF"
+                                    ? role
+                                    : "선수";
+                          const positionValue = role === "player" || !role ? "player" : role;
+                          const teamOptions = [
+                            { value: team.value, label: teamLabel(team.value) },
+                            { value: team.value === "A" ? "B" : "A", label: teamLabel(team.value === "A" ? "B" : "A") },
+                            { value: "BENCH", label: "휴식" },
+                          ];
                           return (
                             <Group key={p.id} gap="xs" wrap="wrap" p="xs" style={{ backgroundColor: rowBg, borderRadius: 6 }}>
                               <Text size="sm" className="min-w-20" style={{ color: nameColor, fontWeight: 600 }}>
                                 {p.name}
                               </Text>
+                              <Select
+                                size="xs"
+                                data={teamOptions}
+                                value={lineups[p.id]}
+                                onChange={(val) => setTeam(p.id, val as "A" | "B" | "BENCH")}
+                                className="w-28"
+                                styles={{ dropdown: { zIndex: 9999 } }}
+                              />
                               <Select
                                 size="xs"
                                 data={[
@@ -485,12 +500,14 @@ export default function MatchControl() {
                                 value={positionValue}
                                 onChange={(val) => {
                                   const v = val ?? "player";
-                                  if ((v === "referee" || v === "assistant_referee" || v === "gk")) {
+                                  if (v === "referee" || v === "assistant_referee" || v === "GK" || v === "gk") {
+                                    if (v === "GK") setPlayerRole(p.id, "GK");
+                                    else setPlayerRole(p.id, v as RoleType);
                                     setTeam(p.id, "BENCH");
                                   } else {
+                                    setPlayerRole(p.id, v as RoleType);
                                     setTeam(p.id, team.value);
                                   }
-                                  setPlayerRole(p.id, v as RoleType);
                                 }}
                                 className="w-28"
                                 styles={{ dropdown: { zIndex: 9999 } }}
