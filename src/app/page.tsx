@@ -310,6 +310,11 @@ export default function MatchControl() {
       }
     }
 
+    console.log("[lineup] lineupsToSet", JSON.stringify(lineupsToSet));
+    console.log("[lineup] rolesToSet", JSON.stringify(rolesToSet));
+    console.log("[lineup] teamCounts", JSON.stringify(teamCounts));
+    console.log("[lineup] teamSlots", JSON.stringify(teamSlots));
+
     setLineups(lineupsToSet);
     setRoles(rolesToSet);
   };
