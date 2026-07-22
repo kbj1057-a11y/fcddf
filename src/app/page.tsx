@@ -253,13 +253,11 @@ export default function MatchControl() {
         const rows = Object.entries(lineups).map(([playerId, team]) => {
           const role = roles[playerId] ?? "player";
           const isGK = role === "gk" || role === "GK";
-          const isRef = role === "referee";
-          const isAsst = role === "assistant_referee";
           let position: string | null = null;
           if (role === "FW" || role === "MF" || role === "DF") position = role;
           else if (isGK) position = "GK";
-          else if (isRef) position = "주심";
-          else if (isAsst) position = "부심";
+          else if (role === "referee") position = "주심";
+          else if (role === "assistant_referee") position = "부심";
           else if (team === "BENCH") position = "BENCH";
           return {
             quarter_id: quarter.id,
@@ -268,8 +266,6 @@ export default function MatchControl() {
             position,
             is_gk: isGK,
             played_minutes: team === "BENCH" ? 0 : 12,
-            referee: isRef,
-            assistant_referee: isAsst,
           };
         });
         const { error: qlErr } = await supabase.from("quarter_lineups").insert(rows);
