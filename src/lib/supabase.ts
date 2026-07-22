@@ -42,6 +42,8 @@ export type QuarterLineup = {
   position: string | null;
   is_gk: boolean;
   played_minutes: number;
+  referee: boolean;
+  assistant_referee: boolean;
 };
 
 export type Game = {

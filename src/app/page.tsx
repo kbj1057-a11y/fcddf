@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import { Button, Stack, Text, Title, Group, SimpleGrid, Box, Select, Paper, Badge } from "@mantine/core";
 import { supabase } from "@/lib/supabase";
-import type { Player, Attendance, Game, QuarterLineup, MatchQuarter, RoleType } from "@/lib/supabase";
+import type { Player, Attendance, Game, QuarterLineup, RoleType } from "@/lib/supabase";
 
 type Step = "ATTENDANCE" | "LINEUP" | "CONFIRM";
 
@@ -26,7 +26,11 @@ export default function MatchControl() {
   const [lineups, setLineups] = useState<TeamMap>({});
   const [roles, setRoles] = useState<RoleMap>({});
   const [games, setGames] = useState<Game[]>([]);
-  const [completedQuarters, setCompletedQuarters] = useState<MatchQuarter[]>([]);
+  const [completedQuarters, setCompletedQuarters] = useState<{
+    id: string;
+    quarter_number: number;
+    status: string;
+  }[]>([]);
   const [completedLineups, setCompletedLineups] = useState<QuarterLineup[]>([]);
   const [gameLabel, setGameLabel] = useState<string>("1");
 
@@ -122,28 +126,43 @@ export default function MatchControl() {
         bench.push(player);
         continue;
       }
-      const pick: "A" | "B" =
-        counts.A >= target ? "B" : counts.B >= target ? "A" : nextTeam();
+      const pick: "A" | "B" = counts.A >= target ? "B" : counts.B >= target ? "A" : nextTeam();
       last = pick;
       counts[pick] += 1;
       teams[pick].push(player);
     }
 
-    for (const team of ["A", "B"] as "A" | "B"[]) {
-      const sortedTeam = [...teams[team]].sort((a, b) => (TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9));
-      teams[team] = [];
+    const picks: ("A" | "B")[] = [];
+    for (const player of sorted) {
+      if (counts.A >= target && counts.B >= target) {
+        bench.push(player);
+        continue;
+      }
+      const pick: "A" | "B" = counts.A >= target ? "B" : counts.B >= target ? "A" : last === "A" ? "B" : "A";
+      last = pick;
+      counts[pick] += 1;
+      teams[pick].push(player);
+      picks.push(pick);
+    }
+
+    const teamEntries: ["A" | "B", Player[]][] = [
+      ["A", teams.A],
+      ["B", teams.B],
+    ];
+    for (const [teamKey, group] of teamEntries) {
+      const sortedTeam = [...group].sort((a, b) => (TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9));
+      teams[teamKey] = [];
       if (!isFull) {
-        for (const p of sortedTeam) teams[team].push(p);
+        for (const p of sortedTeam) teams[teamKey].push(p);
         continue;
       }
       const gkReady: Player[] = [];
       const fillReady: Player[] = [];
       for (const p of sortedTeam) {
-        if (p.tier === "S" && teamSlots[team].GK === 0) gkReady.push(p);
+        if (p.tier === "S" && teamSlots[teamKey].GK === 0) gkReady.push(p);
         else fillReady.push(p);
       }
       const seated: Player[] = [];
-      const positionPlan: Record<string, QuarterPlan> = {};
       const deskSlots: { value: string; max: number }[] = [
         { value: "DF", max: 4 },
         { value: "MF", max: 3 },
@@ -151,32 +170,31 @@ export default function MatchControl() {
       ];
       if (gkReady.length > 0) {
         const gk = gkReady[0];
-        teamSlots[team].GK += 1;
+        teamSlots[teamKey].GK += 1;
         seated.push(gk);
       }
       for (const slot of deskSlots) {
         for (const p of fillReady) {
           if (seated.includes(p)) continue;
-          if (teamSlots[team][slot.value] < slot.max) {
-            teamSlots[team][slot.value] += 1;
+          if (teamSlots[teamKey][slot.value] < slot.max) {
+            teamSlots[teamKey][slot.value] += 1;
             seated.push(p);
           }
         }
       }
       const rest = fillReady.filter((p) => !seated.includes(p));
-      teams[team] = [...seated, ...rest];
+      teams[teamKey] = [...seated, ...rest];
     }
 
     const nextLineups: TeamMap = {};
     const nextRoles: RoleMap = {};
-    for (const team of ["A", "B"] as "A" | "B"[]) {
-      const group = teams[team];
+    for (const [teamKey, group] of teamEntries) {
       const gkCount: Record<"A" | "B", number> = { A: 0, B: 0 };
       for (const p of group) {
-        nextLineups[p.id] = team;
-        if (gkCount[team] === 0 && isFull && p.tier === "S") {
+        nextLineups[p.id] = teamKey;
+        if (gkCount[teamKey] === 0 && isFull && p.tier === "S") {
           nextRoles[p.id] = "gk";
-          gkCount[team] += 1;
+          gkCount[teamKey] += 1;
         } else {
           nextRoles[p.id] = "player";
         }
@@ -218,7 +236,7 @@ export default function MatchControl() {
         const rows = Object.entries(lineups).map(([playerId, team]) => ({
           quarter_id: quarter.id,
           player_id: playerId,
-          team,
+          team: team as "A" | "B" | "BENCH",
           position: roles[playerId] === "gk" ? "GK" : team === "BENCH" ? "BENCH" : null,
           is_gk: roles[playerId] === "gk",
           played_minutes: team === "BENCH" ? 0 : 12,
@@ -236,9 +254,7 @@ export default function MatchControl() {
     }
   };
 
-  const openGameDetail = async (game: Game | null = null) => {
-    const target = game || completedGame;
-    if (!target) return;
+  const openGameDetail = async () => {
     setLoading(true);
     const { data: quarters } = await supabase
       .from("match_quarters")
@@ -331,9 +347,7 @@ export default function MatchControl() {
                 출석자 {attendingPlayers.length}명
               </Text>
             </Box>
-            <Group gap="xs">
-              <Button onClick={generateAutoLineup}>자동 라인업 생성</Button>
-            </Group>
+            <Button onClick={generateAutoLineup}>자동 라인업 생성</Button>
           </Group>
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
             {TEAMS.map((team) => {
@@ -434,14 +448,14 @@ export default function MatchControl() {
             {loading ? "저장 중..." : `${gameLabel}게임 확정 저장`}
           </Button>
           <Group gap="sm">
-            <Button variant="light" onClick={() => openGameDetail()}>오늘 하루 보기</Button>
+            <Button variant="light" onClick={openGameDetail}>오늘 하루 보기</Button>
           </Group>
           <Stack gap="sm">
             {games.map((g) => (
               <Group key={g.id} gap="sm" className="border rounded p-3">
                 <Text
                   style={{ cursor: "pointer", textDecoration: "underline" }}
-                  onClick={() => openGameDetail(g)}
+                  onClick={openGameDetail}
                 >
                   {g.label}게임
                 </Text>
