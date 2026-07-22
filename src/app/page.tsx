@@ -190,16 +190,18 @@ export default function MatchControl() {
       return att?.arrival_rank ?? Infinity;
     };
 
-    const previousPriority = (playerId: string) => {
+    const fieldPlayerPenalty = (playerId: string) => {
       const info = previousInfo[playerId];
-      if (!info) return 2;
-      if (info.role === "BENCH" || info.team === "BENCH") return 0;
-      if (info.role === "referee" || info.role === "assistant_referee" || info.role === "GK") return 1;
-      return 2;
+      if (!info) return 1;
+      if (info.team === "A" || info.team === "B") {
+        const role = (info.role || "").toUpperCase();
+        if (["FW", "MF", "DF", "GK", "PLAYER"].includes(role)) return 1;
+      }
+      return 0;
     };
 
     const sorted = [...list].sort((a, b) => {
-      const pa = previousPriority(a.id) - previousPriority(b.id);
+      const pa = fieldPlayerPenalty(a.id) - fieldPlayerPenalty(b.id);
       if (pa !== 0) return pa;
       const ra = getArrivalRank(a.id) - getArrivalRank(b.id);
       if (ra !== 0) return ra;
