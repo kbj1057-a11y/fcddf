@@ -276,6 +276,12 @@ export default function MatchControl() {
   return (
     <Stack gap="md">
       <Title order={2}>FC어울림 매치 컨트롤</Title>
+
+      <Paper withBorder p="md">
+        <Title order={4}>선수 추가</Title>
+        <AddPlayerForm onAdded={(p) => setPlayers((prev) => [...prev, p])} />
+      </Paper>
+
       <Group gap="sm" wrap="wrap">
         <input
           type="date"
@@ -496,6 +502,66 @@ export default function MatchControl() {
           )}
         </Stack>
       )}
+    </Stack>
+  );
+}
+
+function AddPlayerForm({ onAdded }: { onAdded: (p: Player) => void }) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [tier, setTier] = useState<Player["tier"]>("B");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim() || !phone.trim()) return alert("이름과 전화번호를 입력하세요.");
+    setSaving(true);
+    const { data, error } = await supabase
+      .from("players")
+      .insert({ name: name.trim(), phone_last4: phone.trim().slice(-4), tier })
+      .select()
+      .single();
+    setSaving(false);
+    if (error) return alert("저장 실패: " + error.message);
+    if (data) {
+      onAdded(data);
+      setName("");
+      setPhone("");
+      setTier("B");
+    }
+  };
+
+  return (
+    <Stack gap="xs">
+      <Group gap="xs">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="이름"
+          className="border rounded px-3 py-2 text-black"
+        />
+        <input
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="전화번호"
+          className="border rounded px-3 py-2 text-black"
+        />
+        <select
+          value={tier}
+          onChange={(e) => setTier(e.target.value as Player["tier"])}
+          className="border rounded px-3 py-2 text-black"
+        >
+          <option value="S">S</option>
+          <option value="A">A</option>
+          <option value="B">B</option>
+          <option value="C">C</option>
+        </select>
+        <Button onClick={submit} disabled={saving} size="xs">
+          추가
+        </Button>
+      </Group>
+      <Text size="xs" c="dimmed">
+        전화번호는 뒤 4자리만 저장됩니다.
+      </Text>
     </Stack>
   );
 }
