@@ -163,32 +163,30 @@ export default function MatchControl() {
     };
 
     const previousInfo: Record<string, { team: string; role: string }> = {};
+    const prevGameLabel = String(Math.max(1, parseInt(gameLabel, 10) - 1));
     try {
-      if (!games[games.length - 1]) {
-        const { data: prevGames } = await supabase
-          .from("games")
+      const { data: prevGame } = await supabase
+        .from("games")
+        .select("id")
+        .eq("match_date", matchDate)
+        .eq("label", prevGameLabel)
+        .maybeSingle();
+      if (prevGame?.id) {
+        const { data: prevQuarters } = await supabase
+          .from("match_quarters")
           .select("id")
-          .eq("match_date", matchDate)
-          .order("played_at", { ascending: false })
-          .limit(1);
-        const prevGameId = prevGames?.[0]?.id;
-        if (prevGameId) {
-          const { data: prevQuarters } = await supabase.from("match_quarters").select("id").eq("match_date", matchDate);
-          const qIds = (prevQuarters || []).map((q) => q.id);
-          if (qIds.length) {
-            const { data: prevLineups } = await supabase.from("quarter_lineups").select("player_id, team, position").in("quarter_id", qIds);
-            for (const row of prevLineups || []) {
-              previousInfo[row.player_id] = { team: row.team, role: row.position ?? "player" };
-            }
-          }
-        }
-      } else {
-        const { data: quarters } = await supabase.from("match_quarters").select("id").eq("match_date", matchDate);
-        const qIds = (quarters || []).map((q) => q.id);
+          .eq("match_date", matchDate);
+        const qIds = (prevQuarters || []).map((q) => q.id);
         if (qIds.length) {
-          const { data: prevLineups } = await supabase.from("quarter_lineups").select("player_id, team, position").in("quarter_id", qIds);
+          const { data: prevLineups } = await supabase
+            .from("quarter_lineups")
+            .select("player_id, team, position")
+            .in("quarter_id", qIds);
           for (const row of prevLineups || []) {
-            previousInfo[row.player_id] = { team: row.team, role: row.position ?? "player" };
+            previousInfo[row.player_id] = {
+              team: row.team,
+              role: row.position ?? "player",
+            };
           }
         }
       }
@@ -527,14 +525,14 @@ export default function MatchControl() {
 
   const deleteHistoryGame = async () => {
     if (!historyGame) return;
-    const ok = window.confirm(`${historyGame.label} 게임을 삭제할까요?\n백업 테이블에만 남습니다.`);
+    const ok = window.confirm(`${historyGame.label} 게임을 삭제할까요?`);
     if (!ok) return;
     const { data: qs } = await supabase.from("match_quarters").select("id").eq("match_date", matchDate);
     if (qs?.length) {
-      const qIds = qs.map((q) => q.id);
+      const qIds = (qs || []).map((q) => q.id);
       await supabase.from("quarter_lineups").delete().in("quarter_id", qIds);
+      await supabase.from("match_quarters").delete().eq("match_date", matchDate);
     }
-    await supabase.from("match_quarters").delete().eq("match_date", matchDate);
     await supabase.from("games").delete().eq("id", historyGame.id);
     setHistoryOpen(false);
     setHistoryGame(null);
@@ -667,7 +665,15 @@ export default function MatchControl() {
           {step === "LINEUP" && (
             <Paper withBorder p="md">
               <Title order={4}>라인업</Title>
-              <Group mb="xs">
+              <Group mb="xs" wrap="wrap">
+                <Select
+                  size="xs"
+                  label="게임 번호"
+                  value={gameLabel}
+                  onChange={(v) => v && setGameLabel(v)}
+                  data={[...games].reverse().map((g) => ({ value: g.label || "1", label: `${g.label || "1"}게임` }))}
+                  w={120}
+                />
                 <Button size="xs" onClick={generateAutoLineup}>
                   자동 라인업 생성
                 </Button>
