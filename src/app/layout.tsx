@@ -16,14 +16,13 @@ export default function RootLayout({
   return (
     <html lang="ko" data-mantine-color-scheme="light">
       <head>
-        <ColorSchemeScript />
         <meta
           name="viewport"
           content="width=device-width, initial-scale=1, viewport-fit=cover"
         />
       </head>
       <body className="bg-pitch-green text-white min-h-screen">
-        <MantineProvider>
+        <MantineProvider defaultColorScheme="light">
           <main className="mx-auto max-w-screen-sm p-4">{children}</main>
         </MantineProvider>
       </body>

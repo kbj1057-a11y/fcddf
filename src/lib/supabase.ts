@@ -12,7 +12,6 @@ export type Player = {
   phone_full?: string | null;
   is_guest: boolean;
   tier: "S" | "A" | "B" | "C";
-  preferred_position: "FW" | "MF" | "DF" | "GK" | null;
   created_at: string;
 };
 
@@ -23,6 +22,7 @@ export type Attendance = {
   arrival_time: string;
   status: "ATTENDING" | "EARLY_EXIT" | "ABSENT";
   exit_time: string | null;
+  arrival_rank: number | null;
 };
 
 export type MatchQuarter = {
@@ -48,8 +48,8 @@ export type Game = {
   id: string;
   played_at: string;
   label: string | null;
-  team_a_score: number | null;
-  team_b_score: number | null;
-  status: string | null;
+  status: "WAITING" | "IN_PROGRESS" | "COMPLETED";
   created_at: string;
 };
+
+export type RoleType = "player" | "gk" | "referee" | "assistant_referee";
