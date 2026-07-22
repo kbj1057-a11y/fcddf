@@ -257,6 +257,7 @@ export default function MatchControl() {
       rolesToSet[playerId] = role as RoleType;
       assigned.add(playerId);
       teamCounts[team] += 1;
+      if (role !== "player") teamSlots[team][role] = (teamSlots[team][role] || 0) + 1;
     };
 
     for (const p of list) {
