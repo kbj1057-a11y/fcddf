@@ -685,7 +685,7 @@ export default function MatchControl() {
               </Group>
 
               <Divider label="오늘 하루 보기" labelPosition="center" my="md" />
-              <SimpleGrid cols={3} spacing="xs">
+              <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
                 {[...games].reverse().map((g) => (
                   <Paper withBorder p="xs" key={g.id} style={{ cursor: "pointer" }} onClick={() => openHistory(g)}>
                     <Text size="sm" fw={500}>
@@ -693,10 +693,10 @@ export default function MatchControl() {
                     </Text>
                     <Text size="xs" c="dimmed">{g.match_date}</Text>
                     <Group gap="xs" mt="xs">
-                      <ActionIcon size="xs" variant="light" color="blue" onClick={() => openHistory(g)}>
+                      <ActionIcon size="xs" variant="light" color="blue" onClick={(e) => { e.stopPropagation(); openHistory(g); }}>
                         보기
                       </ActionIcon>
-                      <ActionIcon size="xs" variant="light" color="red" onClick={() => deleteGameById(g.id)}>
+                      <ActionIcon size="xs" variant="light" color="red" onClick={(e) => { e.stopPropagation(); deleteGameById(g.id); }}>
                         삭제
                       </ActionIcon>
                     </Group>
