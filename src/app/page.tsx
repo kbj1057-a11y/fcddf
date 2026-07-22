@@ -106,6 +106,31 @@ export default function MatchControl() {
     });
   };
 
+  const resetAttendance = async () => {
+    if (!confirm("모두 결석으로 초기화하시겠어요?")) return;
+    await supabase
+      .from("attendance")
+      .upsert(
+        players.map((p) => ({
+          match_date: matchDate,
+          player_id: p.id,
+          status: "ABSENT",
+          arrival_time: new Date().toISOString(),
+          exit_time: null,
+          arrival_rank: null,
+        })),
+        { onConflict: "match_date,player_id" }
+      );
+    setAttendances((prev) =>
+      prev.map((a) => ({
+        ...a,
+        status: "ABSENT",
+        arrival_rank: null,
+        exit_time: null,
+      }))
+    );
+  };
+
   const generateAutoLineup = () => {
     const list = attendingPlayers.slice();
     if (list.length < 7) {
@@ -335,7 +360,10 @@ export default function MatchControl() {
 
           {step === "ATTENDANCE" && (
             <Stack gap="sm">
-              <Title order={3}>출석 체크</Title>
+              <Group justify="space-between">
+                <Title order={3}>출석 체크</Title>
+                <Button size="xs" variant="light" color="red" onClick={resetAttendance}>리셋</Button>
+              </Group>
               <Text size="sm" c="dimmed">기본: 결석 / 참가 버튼으로 전환</Text>
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 {players.map((p) => {
