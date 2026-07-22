@@ -5,6 +5,9 @@ import { Button, Stack, Text, Title, Group, SimpleGrid, Box, Select, Paper, Badg
 import { supabase } from "@/lib/supabase";
 import type { Player, Attendance, Game, QuarterLineup, RoleType } from "@/lib/supabase";
 
+const AUTH_ID = "admin";
+const AUTH_PW = "admin1234";
+
 type Step = "ATTENDANCE" | "LINEUP" | "CONFIRM";
 
 const TEAMS = [
@@ -33,12 +36,15 @@ export default function MatchControl() {
   }[]>([]);
   const [completedLineups, setCompletedLineups] = useState<QuarterLineup[]>([]);
   const [gameLabel, setGameLabel] = useState<string>("1");
+  const [authId, setAuthId] = useState("");
+  const [authPw, setAuthPw] = useState("");
+  const [authed, setAuthed] = useState(false);
 
   const attendingPlayers = useMemo(() => {
-    const map = new Map<string, Player>();
     const ranked = attendances
       .filter((a) => a.status === "ATTENDING" && a.arrival_rank != null)
       .sort((a, b) => (a.arrival_rank ?? 9999) - (b.arrival_rank ?? 9999));
+    const map = new Map<string, Player>();
     for (const a of ranked) {
       const p = players.find((pl) => pl.id === a.player_id);
       if (p) map.set(p.id, p);
@@ -119,30 +125,17 @@ export default function MatchControl() {
     const sorted = [...list].sort((a, b) => (TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9));
     const counts: Record<"A" | "B", number> = { A: 0, B: 0 };
     let last: "A" | "B" | null = null;
-    const nextTeam = () => (last === "A" ? "B" : "A");
 
     for (const player of sorted) {
       if (counts.A >= target && counts.B >= target) {
         bench.push(player);
         continue;
       }
-      const pick: "A" | "B" = counts.A >= target ? "B" : counts.B >= target ? "A" : nextTeam();
+      const pick: "A" | "B" =
+        counts.A >= target ? "B" : counts.B >= target ? "A" : last === "A" ? "B" : "A";
       last = pick;
       counts[pick] += 1;
       teams[pick].push(player);
-    }
-
-    const picks: ("A" | "B")[] = [];
-    for (const player of sorted) {
-      if (counts.A >= target && counts.B >= target) {
-        bench.push(player);
-        continue;
-      }
-      const pick: "A" | "B" = counts.A >= target ? "B" : counts.B >= target ? "A" : last === "A" ? "B" : "A";
-      last = pick;
-      counts[pick] += 1;
-      teams[pick].push(player);
-      picks.push(pick);
     }
 
     const teamEntries: ["A" | "B", Player[]][] = [
@@ -277,113 +270,185 @@ export default function MatchControl() {
     <Stack gap="md">
       <Title order={2}>FC어울림 매치 컨트롤</Title>
 
-      <Paper withBorder p="md">
-        <Title order={4}>선수 추가</Title>
-        <AddPlayerForm onAdded={(p) => setPlayers((prev) => [...prev, p])} />
-      </Paper>
-
-      <Group gap="sm" wrap="wrap">
-        <input
-          type="date"
-          value={matchDate}
-          onChange={(e) => setMatchDate(e.target.value)}
-          className="border rounded px-3 py-3 text-black"
-        />
-        <input
-          type="text"
-          value={gameLabel}
-          onChange={(e) => setGameLabel(e.target.value)}
-          placeholder="게임번호"
-          className="border rounded px-3 py-3 text-black w-24"
-        />
-        <Button onClick={loadPlayers} disabled={loading} size="lg">
-          선수 불러오기
-        </Button>
-      </Group>
-
-      <Group gap="sm">
-        <Button variant="light" onClick={() => setStep("ATTENDANCE")}>출석</Button>
-        <Button variant="light" onClick={() => setStep("LINEUP")}>라인업</Button>
-        <Button variant="light" onClick={() => setStep("CONFIRM")}>확정</Button>
-      </Group>
-
-      {step === "ATTENDANCE" && (
-        <Stack gap="sm">
-          <Title order={3}>출석 체크</Title>
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            {players.map((p) => {
-              const att = attendances.find((a) => a.player_id === p.id);
-              return (
-                <Group key={p.id} justify="space-between" className="border rounded p-3">
-                  <Text>{p.name}</Text>
-                  <Group gap="xs">
-                    <Button
-                      size="xs"
-                      color={att?.status === "ATTENDING" ? "green" : "gray"}
-                      onClick={() => markAttendance(p.id, "ATTENDING")}
-                    >
-                      참가
-                    </Button>
-                    <Button
-                      size="xs"
-                      color={att?.status === "ABSENT" ? "red" : "gray"}
-                      onClick={() => markAttendance(p.id, "ABSENT")}
-                    >
-                      결석
-                    </Button>
-                    {att?.status === "ATTENDING" && (
-                      <Badge variant="light" color="yellow">
-                        {att.arrival_rank != null ? `#${att.arrival_rank}` : "순서미정"}
-                      </Badge>
-                    )}
-                  </Group>
-                </Group>
-              );
-            })}
-          </SimpleGrid>
-        </Stack>
-      )}
-
-      {step === "LINEUP" && (
-        <Stack gap="md">
-          <Group justify="space-between">
-            <Box>
-              <Title order={3}>라인업</Title>
-              <Text size="sm" c="dimmed">
-                출석자 {attendingPlayers.length}명
-              </Text>
-            </Box>
-            <Button onClick={generateAutoLineup}>자동 라인업 생성</Button>
+      {!authed ? (
+        <Paper withBorder p="md">
+          <Title order={4}>접근 권한</Title>
+          <Group gap="xs">
+            <input
+              value={authId}
+              onChange={(e) => setAuthId(e.target.value)}
+              placeholder="아이디"
+              className="border rounded px-3 py-2 text-black"
+            />
+            <input
+              type="password"
+              value={authPw}
+              onChange={(e) => setAuthPw(e.target.value)}
+              placeholder="비밀번호"
+              className="border rounded px-3 py-2 text-black"
+            />
+            <Button
+              onClick={() => {
+                if (authId === AUTH_ID && authPw === AUTH_PW) setAuthed(true);
+                else alert("아이디 또는 비밀번호가 틀렸습니다.");
+              }}
+            >
+              로그인
+            </Button>
           </Group>
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            {TEAMS.map((team) => {
-              const members = attendingPlayers.filter((p) => lineups[p.id] === team.value);
-              return (
-                <Paper key={team.value} withBorder p="md">
-                  <Text fw={600}>{team.label}</Text>
+        </Paper>
+      ) : (
+        <>
+          <Button size="xs" variant="light" color="red" onClick={() => setAuthed(false)}>
+            로그아웃
+          </Button>
+
+          <Paper withBorder p="md">
+            <Title order={4}>선수 추가</Title>
+            <AddPlayerForm onAdded={(p) => setPlayers((prev) => [...prev, p])} />
+          </Paper>
+
+          <Group gap="sm" wrap="wrap">
+            <input
+              type="date"
+              value={matchDate}
+              onChange={(e) => setMatchDate(e.target.value)}
+              className="border rounded px-3 py-3 text-black"
+            />
+            <input
+              type="text"
+              value={gameLabel}
+              onChange={(e) => setGameLabel(e.target.value)}
+              placeholder="게임번호"
+              className="border rounded px-3 py-3 text-black w-24"
+            />
+            <Button onClick={loadPlayers} disabled={loading} size="lg">
+              선수 불러오기
+            </Button>
+          </Group>
+
+          <Group gap="sm">
+            <Button variant="light" onClick={() => setStep("ATTENDANCE")}>출석</Button>
+            <Button variant="light" onClick={() => setStep("LINEUP")}>라인업</Button>
+            <Button variant="light" onClick={() => setStep("CONFIRM")}>확정</Button>
+          </Group>
+
+          {step === "ATTENDANCE" && (
+            <Stack gap="sm">
+              <Title order={3}>출석 체크</Title>
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                {players.map((p) => {
+                  const att = attendances.find((a) => a.player_id === p.id);
+                  return (
+                    <Group key={p.id} justify="space-between" className="border rounded p-3">
+                      <Text>{p.name}</Text>
+                      <Group gap="xs">
+                        <Button
+                          size="xs"
+                          color={att?.status === "ATTENDING" ? "green" : "gray"}
+                          onClick={() => markAttendance(p.id, "ATTENDING")}
+                        >
+                          참가
+                        </Button>
+                        <Button
+                          size="xs"
+                          color={att?.status === "ABSENT" ? "red" : "gray"}
+                          onClick={() => markAttendance(p.id, "ABSENT")}
+                        >
+                          결석
+                        </Button>
+                        {att?.status === "ATTENDING" && (
+                          <Badge variant="light" color="yellow">
+                            {att.arrival_rank != null ? `#${att.arrival_rank}` : "순서미정"}
+                          </Badge>
+                        )}
+                      </Group>
+                    </Group>
+                  );
+                })}
+              </SimpleGrid>
+            </Stack>
+          )}
+
+          {step === "LINEUP" && (
+            <Stack gap="md">
+              <Group justify="space-between">
+                <Box>
+                  <Title order={3}>라인업</Title>
+                  <Text size="sm" c="dimmed">
+                    출석자 {attendingPlayers.length}명
+                  </Text>
+                </Box>
+                <Button onClick={generateAutoLineup}>자동 라인업 생성</Button>
+              </Group>
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                {TEAMS.map((team) => {
+                  const members = attendingPlayers.filter((p) => lineups[p.id] === team.value);
+                  return (
+                    <Paper key={team.value} withBorder p="md">
+                      <Text fw={600}>{team.label}</Text>
+                      <Stack gap="xs" mt="sm">
+                        {members.map((p) => {
+                          const role = roles[p.id];
+                          const roleLabel =
+                            role === "referee"
+                              ? "주심"
+                              : role === "assistant_referee"
+                                ? "부심"
+                                : role === "gk"
+                                  ? "GK"
+                                  : "선수";
+                          return (
+                            <Group key={p.id} gap="xs" wrap="wrap">
+                              <Text size="sm" className="min-w-20">
+                                {p.name}
+                              </Text>
+                              <Select
+                                size="xs"
+                                data={[
+                                  { value: team.value, label: teamLabel(team.value) },
+                                  { value: "BENCH", label: "벤치" },
+                                ]}
+                                value={lineups[p.id]}
+                                onChange={(val) => setTeam(p.id, val as "A" | "B" | "BENCH")}
+                                className="w-28"
+                              />
+                              <Select
+                                size="xs"
+                                data={[
+                                  { value: "player", label: "선수" },
+                                  { value: "gk", label: "GK" },
+                                  { value: "referee", label: "주심" },
+                                  { value: "assistant_referee", label: "부심" },
+                                ]}
+                                value={role ?? "player"}
+                                onChange={(val) => setPlayerRole(p.id, (val ?? "player") as RoleType)}
+                                className="w-28"
+                              />
+                              <Badge color="gray">{roleLabel}</Badge>
+                            </Group>
+                          );
+                        })}
+                      </Stack>
+                    </Paper>
+                  );
+                })}
+                <Paper withBorder p="md">
+                  <Text fw={600}>벤치</Text>
                   <Stack gap="xs" mt="sm">
-                    {members.map((p) => {
-                      const role = roles[p.id];
-                      const roleLabel =
-                        role === "referee"
-                          ? "주심"
-                          : role === "assistant_referee"
-                            ? "부심"
-                            : role === "gk"
-                              ? "GK"
-                              : "선수";
-                      return (
+                    {attendingPlayers
+                      .filter((p) => lineups[p.id] === "BENCH" || !lineups[p.id])
+                      .map((p) => (
                         <Group key={p.id} gap="xs" wrap="wrap">
-                          <Text size="sm" className="min-w-20">
-                            {p.name}
-                          </Text>
+                          <Text size="sm" className="min-w-20">{p.name}</Text>
                           <Select
                             size="xs"
                             data={[
-                              { value: team.value, label: teamLabel(team.value) },
+                              { value: "A", label: "주황/블랙" },
+                              { value: "B", label: "연두/흰색" },
                               { value: "BENCH", label: "벤치" },
                             ]}
-                            value={lineups[p.id]}
+                            value={lineups[p.id] ?? "BENCH"}
                             onChange={(val) => setTeam(p.id, val as "A" | "B" | "BENCH")}
                             className="w-28"
                           />
@@ -395,112 +460,75 @@ export default function MatchControl() {
                               { value: "referee", label: "주심" },
                               { value: "assistant_referee", label: "부심" },
                             ]}
-                            value={role ?? "player"}
+                            value={roles[p.id] ?? "player"}
                             onChange={(val) => setPlayerRole(p.id, (val ?? "player") as RoleType)}
                             className="w-28"
                           />
-                          <Badge color="gray">{roleLabel}</Badge>
                         </Group>
-                      );
-                    })}
+                      ))}
                   </Stack>
                 </Paper>
-              );
-            })}
-            <Paper withBorder p="md">
-              <Text fw={600}>벤치</Text>
-              <Stack gap="xs" mt="sm">
-                {attendingPlayers
-                  .filter((p) => lineups[p.id] === "BENCH" || !lineups[p.id])
-                  .map((p) => (
-                    <Group key={p.id} gap="xs" wrap="wrap">
-                      <Text size="sm" className="min-w-20">{p.name}</Text>
-                      <Select
-                        size="xs"
-                        data={[
-                          { value: "A", label: "주황/블랙" },
-                          { value: "B", label: "연두/흰색" },
-                          { value: "BENCH", label: "벤치" },
-                        ]}
-                        value={lineups[p.id] ?? "BENCH"}
-                        onChange={(val) => setTeam(p.id, val as "A" | "B" | "BENCH")}
-                        className="w-28"
-                      />
-                      <Select
-                        size="xs"
-                        data={[
-                          { value: "player", label: "선수" },
-                          { value: "gk", label: "GK" },
-                          { value: "referee", label: "주심" },
-                          { value: "assistant_referee", label: "부심" },
-                        ]}
-                        value={roles[p.id] ?? "player"}
-                        onChange={(val) => setPlayerRole(p.id, (val ?? "player") as RoleType)}
-                        className="w-28"
-                      />
-                    </Group>
-                  ))}
-              </Stack>
-            </Paper>
-          </SimpleGrid>
-        </Stack>
-      )}
+              </SimpleGrid>
+            </Stack>
+          )}
 
-      {step === "CONFIRM" && (
-        <Stack gap="md">
-          <Title order={3}>확정</Title>
-          <Text>게임: {gameLabel}</Text>
-          <Button size="xl" color="green" onClick={saveGame} disabled={loading}>
-            {loading ? "저장 중..." : `${gameLabel}게임 확정 저장`}
-          </Button>
-          <Group gap="sm">
-            <Button variant="light" onClick={openGameDetail}>오늘 하루 보기</Button>
-          </Group>
-          <Stack gap="sm">
-            {games.map((g) => (
-              <Group key={g.id} gap="sm" className="border rounded p-3">
-                <Text
-                  style={{ cursor: "pointer", textDecoration: "underline" }}
-                  onClick={openGameDetail}
-                >
-                  {g.label}게임
-                </Text>
-                <Badge color="green">{g.status}</Badge>
+          {step === "CONFIRM" && (
+            <Stack gap="md">
+              <Title order={3}>확정</Title>
+              <Text>게임: {gameLabel}</Text>
+              <Button size="xl" color="green" onClick={saveGame} disabled={loading}>
+                {loading ? "저장 중..." : `${gameLabel}게임 확정 저장`}
+              </Button>
+              <Group gap="sm">
+                <Button variant="light" onClick={openGameDetail}>오늘 하루 보기</Button>
               </Group>
-            ))}
-          </Stack>
-          {completedQuarters.length > 0 && (
-            <Paper withBorder p="md">
-              <Stack gap="xs">
-                <Text fw={600}>쿼터별 라인업</Text>
-                {completedQuarters.map((q) => (
-                  <Box key={q.id}>
-                    <Text fw={500}>{q.quarter_number}Q</Text>
-                    <SimpleGrid cols={{ base: 1, sm: 3 }}>
-                      {TEAMS.map((team) => {
-                        const members = completedLineups
-                          .filter((l) => l.quarter_id === q.id && l.team === team.value)
-                          .map((l) => {
-                            const p = players.find((pl) => pl.id === l.player_id);
-                            if (l.is_gk) return `${p?.name ?? l.player_id} (GK)`;
-                            if (l.referee) return `${p?.name ?? l.player_id} (주심)`;
-                            if (l.assistant_referee) return `${p?.name ?? l.player_id} (부심)`;
-                            return p?.name ?? l.player_id;
-                          });
-                        return (
-                          <Box key={team.value}>
-                            <Text size="sm" fw={500}>{teamLabel(team.value)}</Text>
-                            <Text size="sm">{members.join(", ") || "-"}</Text>
-                          </Box>
-                        );
-                      })}
-                    </SimpleGrid>
-                  </Box>
+              <Stack gap="sm">
+                {games.map((g) => (
+                  <Group key={g.id} gap="sm" className="border rounded p-3">
+                    <Text
+                      style={{ cursor: "pointer", textDecoration: "underline" }}
+                      onClick={openGameDetail}
+                    >
+                      {g.label}게임
+                    </Text>
+                    <Badge color="green">{g.status}</Badge>
+                  </Group>
                 ))}
               </Stack>
-            </Paper>
+              {completedQuarters.length > 0 && (
+                <Paper withBorder p="md">
+                  <Stack gap="xs">
+                    <Text fw={600}>쿼터별 라인업</Text>
+                    {completedQuarters.map((q) => (
+                      <Box key={q.id}>
+                        <Text fw={500}>{q.quarter_number}Q</Text>
+                        <SimpleGrid cols={{ base: 1, sm: 3 }}>
+                          {TEAMS.map((team) => {
+                            const members = completedLineups
+                              .filter((l) => l.quarter_id === q.id && l.team === team.value)
+                              .map((l) => {
+                                const p = players.find((pl) => pl.id === l.player_id);
+                                if (l.is_gk) return `${p?.name ?? l.player_id} (GK)`;
+                                if (l.referee) return `${p?.name ?? l.player_id} (주심)`;
+                                if (l.assistant_referee) return `${p?.name ?? l.player_id} (부심)`;
+                                return p?.name ?? l.player_id;
+                              });
+                            return (
+                              <Box key={team.value}>
+                                <Text size="sm" fw={500}>{teamLabel(team.value)}</Text>
+                                <Text size="sm">{members.join(", ") || "-"}</Text>
+                              </Box>
+                            );
+                          })}
+                        </SimpleGrid>
+                      </Box>
+                    ))}
+                  </Stack>
+                </Paper>
+              )}
+            </Stack>
           )}
-        </Stack>
+        </>
       )}
     </Stack>
   );
@@ -509,7 +537,6 @@ export default function MatchControl() {
 function AddPlayerForm({ onAdded }: { onAdded: (p: Player) => void }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [tier, setTier] = useState<Player["tier"]>("B");
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -517,7 +544,7 @@ function AddPlayerForm({ onAdded }: { onAdded: (p: Player) => void }) {
     setSaving(true);
     const { data, error } = await supabase
       .from("players")
-      .insert({ name: name.trim(), phone_last4: phone.trim().slice(-4), tier })
+      .insert({ name: name.trim(), phone_last4: phone.trim().slice(-4), tier: "B" })
       .select()
       .single();
     setSaving(false);
@@ -526,7 +553,6 @@ function AddPlayerForm({ onAdded }: { onAdded: (p: Player) => void }) {
       onAdded(data);
       setName("");
       setPhone("");
-      setTier("B");
     }
   };
 
@@ -545,16 +571,6 @@ function AddPlayerForm({ onAdded }: { onAdded: (p: Player) => void }) {
           placeholder="전화번호"
           className="border rounded px-3 py-2 text-black"
         />
-        <select
-          value={tier}
-          onChange={(e) => setTier(e.target.value as Player["tier"])}
-          className="border rounded px-3 py-2 text-black"
-        >
-          <option value="S">S</option>
-          <option value="A">A</option>
-          <option value="B">B</option>
-          <option value="C">C</option>
-        </select>
         <Button onClick={submit} disabled={saving} size="xs">
           추가
         </Button>
