@@ -29,6 +29,7 @@ export default function MatchControl() {
   const [lineups, setLineups] = useState<TeamMap>({});
   const [roles, setRoles] = useState<RoleMap>({});
   const [games, setGames] = useState<Game[]>([]);
+  const [completedGame, setCompletedGame] = useState<Game | null>(null);
   const [completedQuarters, setCompletedQuarters] = useState<{
     id: string;
     quarter_number: number;
@@ -39,6 +40,11 @@ export default function MatchControl() {
   const [authId, setAuthId] = useState("");
   const [authPw, setAuthPw] = useState("");
   const [authed, setAuthed] = useState(false);
+  const nextGameLabel = useMemo(() => {
+    const nums = games.map((g) => parseInt(g.label || "0", 10)).filter((n) => !Number.isNaN(n));
+    const max = nums.reduce((m, n) => Math.max(m, n), 0);
+    return String(max + 1);
+  }, [games]);
 
   const attendingPlayers = useMemo(() => {
     const ranked = attendances
@@ -207,15 +213,9 @@ export default function MatchControl() {
     const nextLineups: TeamMap = {};
     const nextRoles: RoleMap = {};
     for (const [teamKey, group] of teamEntries) {
-      const gkCount: Record<"A" | "B", number> = { A: 0, B: 0 };
       for (const p of group) {
         nextLineups[p.id] = teamKey;
-        if (gkCount[teamKey] === 0 && isFull && p.tier === "S") {
-          nextRoles[p.id] = "gk";
-          gkCount[teamKey] += 1;
-        } else {
-          nextRoles[p.id] = "player";
-        }
+        nextRoles[p.id] = "player";
       }
     }
     for (const p of bench) {
@@ -272,7 +272,9 @@ export default function MatchControl() {
     }
   };
 
-  const openGameDetail = async () => {
+  const openGameDetail = async (game?: Game) => {
+    const target = game || completedGame;
+    if (!target) return;
     setLoading(true);
     const { data: quarters } = await supabase
       .from("match_quarters")
@@ -287,6 +289,11 @@ export default function MatchControl() {
     setCompletedQuarters(quarters || []);
     setCompletedLineups(lineupRows || []);
     setLoading(false);
+  };
+
+  const resetLineup = () => {
+    setLineups({});
+    setRoles({});
   };
 
   const teamLabel = (value: string) => TEAMS.find((t) => t.value === value)?.label ?? value;
@@ -347,6 +354,9 @@ export default function MatchControl() {
               placeholder="게임번호"
               className="border rounded px-3 py-3 text-black w-24"
             />
+            <Text size="sm" c="dimmed">
+              다음 예정: {nextGameLabel}게임
+            </Text>
             <Button onClick={loadPlayers} disabled={loading} size="lg">
               선수 불러오기
             </Button>
@@ -402,7 +412,11 @@ export default function MatchControl() {
                     출석자 {attendingPlayers.length}명
                   </Text>
                 </Box>
-                <Button onClick={generateAutoLineup}>자동 라인업 생성</Button>
+                <Group gap="xs">
+                  <Button onClick={generateAutoLineup}>자동 라인업 생성</Button>
+                  <Button variant="light" color="orange" onClick={resetLineup}>라인업 초기화</Button>
+                  <Button variant="light" color="red" onClick={() => setStep("CONFIRM")}>확정</Button>
+                </Group>
               </Group>
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 {TEAMS.map((team) => {
@@ -412,12 +426,16 @@ export default function MatchControl() {
                     return (order[roles[a.id] ?? "player"] ?? 99) - (order[roles[b.id] ?? "player"] ?? 99);
                   });
                   const bgColor = team.value === "A" ? "var(--mantine-color-orange-1)" : "var(--mantine-color-teal-1)";
+                  const darkBg = team.value === "A" ? "var(--mantine-color-orange-9)" : "var(--mantine-color-teal-9)";
                   return (
                     <Paper key={team.value} withBorder p="md" style={{ backgroundColor: bgColor }}>
-                      <Text fw={600}>{team.label}</Text>
+                      <Text fw={700}>{team.label}</Text>
                       <Stack gap="xs" mt="sm">
                         {ordered.map((p) => {
                           const role = roles[p.id];
+                          const isDark = role === "gk" || role === "referee" || role === "assistant_referee";
+                          const rowBg = isDark ? darkBg : "transparent";
+                          const nameColor = isDark ? "#fff" : "#000";
                           const roleLabel =
                             role === "referee"
                               ? "주심"
@@ -427,8 +445,8 @@ export default function MatchControl() {
                                   ? "GK"
                                   : "선수";
                           return (
-                            <Group key={p.id} gap="xs" wrap="wrap">
-                              <Text size="sm" className="min-w-20">
+                            <Group key={p.id} gap="xs" wrap="wrap" p="xs" style={{ backgroundColor: rowBg, borderRadius: 6 }}>
+                              <Text size="sm" className="min-w-20" style={{ color: nameColor, fontWeight: 600 }}>
                                 {p.name}
                               </Text>
                               <Select
@@ -437,9 +455,10 @@ export default function MatchControl() {
                                   { value: team.value, label: teamLabel(team.value) },
                                   { value: "BENCH", label: "휴식" },
                                 ]}
-                                value={lineups[p.id] ?? "BENCH"}
+                                value={lineups[p.id]}
                                 onChange={(val) => setTeam(p.id, val as "A" | "B" | "BENCH")}
                                 className="w-28"
+                                styles={{ dropdown: { zIndex: 9999 } }}
                               />
                               <Select
                                 size="xs"
@@ -452,8 +471,9 @@ export default function MatchControl() {
                                 value={role ?? "player"}
                                 onChange={(val) => setPlayerRole(p.id, (val ?? "player") as RoleType)}
                                 className="w-28"
+                                styles={{ dropdown: { zIndex: 9999 } }}
                               />
-                              <Badge color="gray">{roleLabel}</Badge>
+                              <Badge color={isDark ? "light" : "gray"} variant={isDark ? "filled" : "light"}>{roleLabel}</Badge>
                             </Group>
                           );
                         })}
@@ -541,14 +561,14 @@ export default function MatchControl() {
                 {loading ? "저장 중..." : `${gameLabel}게임 확정 저장`}
               </Button>
               <Group gap="sm">
-                <Button variant="light" onClick={openGameDetail}>오늘 하루 보기</Button>
+                <Button variant="light" onClick={() => openGameDetail(undefined)}>오늘 하루 보기</Button>
               </Group>
               <Stack gap="sm">
                 {games.map((g) => (
                   <Group key={g.id} gap="sm" className="border rounded p-3">
                     <Text
                       style={{ cursor: "pointer", textDecoration: "underline" }}
-                      onClick={openGameDetail}
+                      onClick={() => { setCompletedGame(g); openGameDetail(g); }}
                     >
                       {g.label}게임
                     </Text>
