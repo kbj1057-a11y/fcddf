@@ -242,12 +242,21 @@ export default function MatchControl() {
     const rolesToSet: RoleMap = {};
     const assigned = new Set<string>();
 
+    const teamCounts: Record<"A" | "B", number> = { A: 0, B: 0 };
+
     const canAssign = (role: string, team: "A" | "B") => {
       if (role === "주심" || role === "부심") return false;
       const slotLimit = isFull ? target / 4 : 3;
       if (role !== "player" && (teamSlots[team][role] ?? 0) >= slotLimit) return false;
-      if (teams[team].length >= target / 2) return false;
+      if (teamCounts[team] >= target / 2) return false;
       return true;
+    };
+
+    const assignTo = (playerId: string, team: "A" | "B", role: string) => {
+      lineupsToSet[playerId] = team;
+      rolesToSet[playerId] = role as RoleType;
+      assigned.add(playerId);
+      teamCounts[team] += 1;
     };
 
     for (const p of list) {
@@ -256,16 +265,12 @@ export default function MatchControl() {
       if (role === "referee") continue;
       if (role === "GK") {
         if (canAssign("GK", (info?.team === "B" ? "B" : "A"))) {
-          lineupsToSet[p.id] = info?.team === "B" ? "B" : "A";
-          rolesToSet[p.id] = "GK" as RoleType;
-          assigned.add(p.id);
+          assignTo(p.id, info?.team === "B" ? "B" : "A", "GK");
         }
       } else if (["FW", "MF", "DF"].includes(role)) {
         const team = (info?.team === "B" ? "B" : "A") as "A" | "B";
         if (canAssign(role, team)) {
-          lineupsToSet[p.id] = team;
-          rolesToSet[p.id] = role as RoleType;
-          assigned.add(p.id);
+          assignTo(p.id, team, role);
         }
       }
     }
@@ -293,9 +298,7 @@ export default function MatchControl() {
       const finalTeam = canAssign(normalized, fallback) ? fallback : preferred;
 
       if (!assigned.has(p.id)) {
-        lineupsToSet[p.id] = finalTeam;
-        rolesToSet[p.id] = normalized as RoleType;
-        assigned.add(p.id);
+        assignTo(p.id, finalTeam, normalized);
       }
     }
 
@@ -637,6 +640,9 @@ export default function MatchControl() {
                 </Button>
                 <Button size="xs" variant="light" color="red" onClick={resetLineup}>
                   라인업 초기화
+                </Button>
+                <Button size="xs" color="blue" onClick={saveGame} loading={loading}>
+                  {gameLabel}게임 확정저장
                 </Button>
               </Group>
               <Grid>
