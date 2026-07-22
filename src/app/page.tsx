@@ -153,7 +153,7 @@ export default function MatchControl() {
       B: { GK: 0, DF: 0, MF: 0, FW: 0 },
     };
 
-    let previousTeam: Record<string, "A" | "B" | "BENCH" | null> = {};
+    const previousInfo: Record<string, { team: string; role: string }> = {};
     try {
       const { data: prevGames } = await supabase
         .from("games")
@@ -171,10 +171,13 @@ export default function MatchControl() {
         if (qIds.length) {
           const { data: prevLineups } = await supabase
             .from("quarter_lineups")
-            .select("player_id, team")
+            .select("player_id, team, position")
             .in("quarter_id", qIds);
           for (const row of prevLineups || []) {
-            previousTeam[row.player_id] = row.team as "A" | "B" | "BENCH";
+            previousInfo[row.player_id] = {
+              team: row.team,
+              role: row.position ?? "player",
+            };
           }
         }
       }
@@ -182,7 +185,27 @@ export default function MatchControl() {
       console.error("previous lineup load failed", e);
     }
 
-    const sorted = [...list].sort((a, b) => (TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9));
+    const getArrivalRank = (playerId: string) => {
+      const att = attendances.find((a) => a.player_id === playerId);
+      return att?.arrival_rank ?? Infinity;
+    };
+
+    const previousPriority = (playerId: string) => {
+      const info = previousInfo[playerId];
+      if (!info) return 2;
+      if (info.role === "BENCH" || info.team === "BENCH") return 0;
+      if (info.role === "referee" || info.role === "assistant_referee" || info.role === "GK") return 1;
+      return 2;
+    };
+
+    const sorted = [...list].sort((a, b) => {
+      const pa = previousPriority(a.id) - previousPriority(b.id);
+      if (pa !== 0) return pa;
+      const ra = getArrivalRank(a.id) - getArrivalRank(b.id);
+      if (ra !== 0) return ra;
+      return (TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9);
+    });
+
     const counts: Record<"A" | "B", number> = { A: 0, B: 0 };
     let last: "A" | "B" | null = null;
 
@@ -191,9 +214,9 @@ export default function MatchControl() {
         bench.push(player);
         continue;
       }
-      const prev = previousTeam[player.id];
-      const preferA = prev === "B";
-      const preferB = prev === "A";
+      const prev = previousInfo[player.id];
+      const preferA = prev?.team === "B";
+      const preferB = prev?.team === "A";
 
       let pick: "A" | "B";
       if (counts.A >= target) pick = "B";
