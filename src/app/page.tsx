@@ -441,7 +441,7 @@ export default function MatchControl() {
                                   { value: team.value, label: teamLabel(team.value) },
                                   { value: "BENCH", label: "휴식" },
                                 ]}
-                                value={lineups[p.id]}
+                                value={lineups[p.id] ?? "BENCH"}
                                 onChange={(val) => setTeam(p.id, val as "A" | "B" | "BENCH")}
                                 className="w-28"
                               />
