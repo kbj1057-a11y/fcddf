@@ -238,20 +238,14 @@ export default function MatchControl() {
       return 0;
     };
 
+    const lineupsToSet: TeamMap = {};
+    const rolesToSet: RoleMap = {};
     const assigned = new Set<string>();
-    const assignPlayer = (playerId: string, team: "A" | "B", role: string) => {
-      if (!isFull && bench.includes(teams[team]?.find((p) => p.id === playerId)!)) return;
-      if (role === "주심" || role === "부심") return;
-      if (teamSlots[team][role] >= (isFull ? target / 4 : 3)) return;
 
-      const player = players.find((p) => p.id === playerId);
-      if (!player) return;
-
-      teams[team].push(player);
-      teamSlots[team][role] += 1;
-      assigned.add(playerId);
-      setLineups((prev) => ({ ...prev, [playerId]: team }));
-      setRoles((prev) => ({ ...prev, [playerId]: role as RoleType }));
+    const canAssign = (role: string, team: "A" | "B") => {
+      if (role === "주심" || role === "부심") return false;
+      if (teamSlots[team][role] >= (isFull ? target / 4 : 3)) return false;
+      return true;
     };
 
     for (const p of list) {
@@ -259,9 +253,18 @@ export default function MatchControl() {
       const role = roles[p.id] ?? info?.role ?? "player";
       if (role === "referee") continue;
       if (role === "GK") {
-        assignPlayer(p.id, info?.team === "B" ? "B" : "A", "GK");
+        if (canAssign("GK", (info?.team === "B" ? "B" : "A"))) {
+          lineupsToSet[p.id] = info?.team === "B" ? "B" : "A";
+          rolesToSet[p.id] = "GK" as RoleType;
+          assigned.add(p.id);
+        }
       } else if (["FW", "MF", "DF"].includes(role)) {
-        assignPlayer(p.id, info?.team === "B" ? "B" : "A", role);
+        const team = (info?.team === "B" ? "B" : "A") as "A" | "B";
+        if (canAssign(role, team)) {
+          lineupsToSet[p.id] = team;
+          rolesToSet[p.id] = role as RoleType;
+          assigned.add(p.id);
+        }
       }
     }
 
@@ -269,36 +272,40 @@ export default function MatchControl() {
     remaining.sort((a, b) => {
       const rankDiff = (getArrivalRank(a.id) ?? 9999) - (getArrivalRank(b.id) ?? 9999);
       if (rankDiff !== 0) return rankDiff;
-      return fieldPlayerPenalty(a.id) - fieldPlayerPenalty(b.id);
+      const pa = previousInfo[a.id];
+      const pb = previousInfo[b.id];
+      const isPa = !!(pa && (pa.team === "A" || pa.team === "B") && ["FW","MF","DF","GK","PLAYER"].includes((pa.role||"").toUpperCase()));
+      const isPb = !!(pb && (pb.team === "A" || pb.team === "B") && ["FW","MF","DF","GK","PLAYER"].includes((pb.role||"").toUpperCase()));
+      return (isPa ? 1 : 0) - (isPb ? 1 : 0);
     });
 
     for (const p of remaining) {
       const info = previousInfo[p.id];
       const role = roles[p.id] ?? info?.role ?? "player";
-      const teamPref = info?.team === "B" ? "B" : "A";
-      if (teams[teamPref].length < target / 2) {
-        assignPlayer(p.id, teamPref, ["FW", "MF", "DF"].includes(role) ? role : "player");
-      } else {
-        const other: "A" | "B" = teamPref === "A" ? "B" : "A";
-        assignPlayer(p.id, other, ["FW", "MF", "DF"].includes(role) ? role : "player");
+      const normalized = ["FW", "MF", "DF"].includes(role) ? role : "player";
+      const teamPref = (info?.team === "B" ? "B" : "A") as "A" | "B";
+      const other: "A" | "B" = teamPref === "A" ? "B" : "A";
+
+      const preferred = canAssign(normalized, teamPref) ? teamPref : other;
+      const fallback = preferred === teamPref ? other : teamPref;
+      const finalTeam = canAssign(normalized, fallback) ? fallback : preferred;
+
+      if (!assigned.has(p.id)) {
+        lineupsToSet[p.id] = finalTeam;
+        rolesToSet[p.id] = normalized as RoleType;
+        assigned.add(p.id);
       }
     }
 
     for (const p of list) {
       if (!assigned.has(p.id)) {
-        bench.push(p);
-        setLineups((prev) => ({ ...prev, [p.id]: "BENCH" }));
-        setRoles((prev) => ({ ...prev, [p.id]: "player" }));
+        lineupsToSet[p.id] = "BENCH";
+        rolesToSet[p.id] = "player";
       }
     }
 
-    for (const p of list) {
-      const role = roles[p.id] ?? previousInfo[p.id]?.role ?? "player";
-      if (role === "referee") {
-        setLineups((prev) => ({ ...prev, [p.id]: "A" }));
-        setRoles((prev) => ({ ...prev, [p.id]: "referee" }));
-      }
-    }
+    setLineups(lineupsToSet);
+    setRoles(rolesToSet);
   };
 
   const resetLineup = () => {

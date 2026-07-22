@@ -21,8 +21,8 @@ export default function RootLayout({
           content="width=device-width, initial-scale=1, viewport-fit=cover"
         />
       </head>
-      <body className="bg-pitch-green text-white min-h-screen">
-        <MantineProvider defaultColorScheme="light">
+      <body className="bg-pitch-green min-h-screen">
+        <MantineProvider defaultColorScheme="dark">
           <main className="mx-auto max-w-screen-sm p-4">{children}</main>
         </MantineProvider>
       </body>
