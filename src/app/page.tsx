@@ -187,8 +187,8 @@ export default function MatchControl() {
     const teams: Record<"A" | "B", Player[]> = { A: [], B: [] };
     const bench: Player[] = [];
     const teamSlots: Record<"A" | "B", Record<string, number>> = {
-      A: { GK: 0, DF: 0, MF: 0, FW: 0 },
-      B: { GK: 0, DF: 0, MF: 0, FW: 0 },
+      A: { GK: 0, DF: 0, MF: 0, FW: 0, player: 0 },
+      B: { GK: 0, DF: 0, MF: 0, FW: 0, player: 0 },
     };
 
     const previousInfo: Record<string, { team: string; role: string }> = {};
@@ -244,7 +244,9 @@ export default function MatchControl() {
 
     const canAssign = (role: string, team: "A" | "B") => {
       if (role === "주심" || role === "부심") return false;
-      if (teamSlots[team][role] >= (isFull ? target / 4 : 3)) return false;
+      const slotLimit = isFull ? target / 4 : 3;
+      if (role !== "player" && (teamSlots[team][role] ?? 0) >= slotLimit) return false;
+      if (teams[team].length >= target / 2) return false;
       return true;
     };
 
@@ -627,7 +629,7 @@ export default function MatchControl() {
                   label="게임 번호"
                   value={gameLabel}
                   onChange={(v) => v && setGameLabel(v)}
-                  data={[...games].reverse().map((g) => ({ value: g.label || "1", label: `${g.label || "1"}게임` }))}
+                  data={Array.from({ length: 8 }, (_, i) => ({ value: String(i + 1), label: `${i + 1}게임` }))}
                   w={120}
                 />
                 <Button size="xs" onClick={generateAutoLineup}>
