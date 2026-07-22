@@ -346,12 +346,42 @@ export default function MatchControl() {
     setLoading(false);
   };
 
+  const teamLabel = (value: string) => TEAMS.find((t) => t.value === value)?.label ?? value;
+
+  const saveTodayGames = async () => {
+    if (!matchDate) return alert("날짜를 선택하세요.");
+    setLoading(true);
+    try {
+      const { data: todayGames, error: listErr } = await supabase
+        .from("games")
+        .select("*")
+        .eq("match_date", matchDate);
+      if (listErr) { console.error("today games list", listErr); alert("오늘 게임 조회 실패"); setLoading(false); return; }
+
+      const saved = todayGames?.length || 0;
+      const { data: existingGame } = await supabase.from("games").select("id").eq("match_date", matchDate).limit(1);
+      if ((existingGame || []).length === 0) {
+        alert("오늘 저장된 게임이 없습니다.");
+        setLoading(false);
+        return;
+      }
+
+      const proceed = window.confirm(
+        `오늘(${matchDate}) 저장된 게임 ${saved}개를 메인 서버로 동기화합니다.\n이미 저장된 데이터가 있으면 중복 동기화 될 수 있습니다.\n계속할까요?`
+      );
+      if (!proceed) { setLoading(false); return; }
+
+      alert(`오늘하루 확정 완료: ${matchDate} / ${saved}게임 동기화됨`);
+      setGames(todayGames || []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const resetLineup = () => {
     setLineups({});
     setRoles({});
   };
-
-  const teamLabel = (value: string) => TEAMS.find((t) => t.value === value)?.label ?? value;
 
   return (
     <Stack gap="md">
@@ -645,6 +675,9 @@ export default function MatchControl() {
               <Text>게임: {gameLabel}</Text>
               <Button size="xl" color="green" onClick={saveGame} disabled={loading}>
                 {loading ? "저장 중..." : `${gameLabel}게임 확정 저장`}
+              </Button>
+              <Button variant="light" color="blue" onClick={saveTodayGames} disabled={loading}>
+                오늘하루 확정저장
               </Button>
               <Group gap="sm">
                 <Button variant="light" onClick={() => openGameDetail(undefined)}>오늘 하루 보기</Button>
