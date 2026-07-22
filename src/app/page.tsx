@@ -233,6 +233,52 @@ export default function MatchControl() {
     setGameLabel(resolvedLabel);
     setLoading(true);
     try {
+      const { data: existing, error: existErr } = await supabase
+        .from("games")
+        .select("id")
+        .eq("match_date", matchDate)
+        .eq("label", resolvedLabel)
+        .maybeSingle();
+      if (existErr) { console.error("games check", existErr); alert("게임 확인 실패: " + existErr.message); setLoading(false); return; }
+
+      if (existing?.id) {
+        const ok = window.confirm(
+          `이미 ${matchDate} ${resolvedLabel} 게임이 저장되어 있습니다.\n덮어쓰면 기존 데이터가 백업 후 삭제됩니다.\n계속할까요?`
+        );
+        if (!ok) { setLoading(false); return; }
+
+        const { data: existingGame } = await supabase.from("games").select("*").eq("id", existing.id).single();
+        const { data: existingQuarters } = await supabase.from("match_quarters").select("*").eq("match_date", matchDate);
+        const qIds = (existingQuarters || []).map((q) => q.id);
+        const { data: existingLineups } = qIds.length
+          ? await supabase.from("quarter_lineups").select("*").in("quarter_id", qIds)
+          : { data: [] };
+
+        const { error: backupGameErr } = await supabase.from("games_backup").insert({ ...existingGame, backup_at: new Date().toISOString() });
+        if (backupGameErr && !backupGameErr.message.includes("duplicate")) console.error("games_backup insert", backupGameErr);
+
+        if (existingQuarters && existingQuarters.length) {
+          const { error: backupQErr } = await supabase.from("match_quarters_backup").insert(
+            existingQuarters.map((q) => ({ ...q, backup_at: new Date().toISOString() }))
+          );
+          if (backupQErr && !backupQErr.message.includes("duplicate")) console.error("match_quarters_backup insert", backupQErr);
+        }
+
+        if (existingLineups && existingLineups.length) {
+          const { error: backupLineErr } = await supabase.from("quarter_lineups_backup").insert(
+            existingLineups.map((r) => ({ ...r, backup_at: new Date().toISOString() }))
+          );
+          if (backupLineErr && !backupLineErr.message.includes("duplicate")) console.error("quarter_lineups_backup insert", backupLineErr);
+        }
+
+        const { error: delLineErr } = await supabase.from("quarter_lineups").delete().in("quarter_id", qIds.length ? qIds : [""]);
+        if (delLineErr) console.error("quarter_lineups delete", delLineErr);
+        const { error: delQErr } = await supabase.from("match_quarters").delete().eq("match_date", matchDate);
+        if (delQErr) console.error("match_quarters delete", delQErr);
+        const { error: delGameErr } = await supabase.from("games").delete().eq("id", existing.id);
+        if (delGameErr) console.error("games delete", delGameErr);
+      }
+
       const { data: game, error: gameErr } = await supabase
         .from("games")
         .upsert({ id: completedGame?.id, played_at: new Date().toISOString(), match_date: matchDate, label: resolvedLabel, status: "COMPLETED" })
@@ -273,7 +319,9 @@ export default function MatchControl() {
       }
 
       alert("저장 완료");
-      setGames((prev) => [...prev, game]);
+      setGames((prev) =>
+        existing?.id ? prev.map((g) => (g.id === existing.id ? game : g)) : [...prev, game]
+      );
     } finally {
       setLoading(false);
     }
