@@ -232,11 +232,13 @@ export default function MatchControl() {
     setRoles((prev) => ({ ...prev, [playerId]: role }));
 
   const saveGame = async () => {
+    const resolvedLabel = nextGameLabel;
+    setGameLabel(resolvedLabel);
     setLoading(true);
     try {
       const { data: game, error: gameErr } = await supabase
         .from("games")
-        .insert({ played_at: new Date().toISOString(), label: gameLabel, status: "COMPLETED" })
+        .upsert({ id: completedGame?.id, played_at: new Date().toISOString(), label: resolvedLabel, status: "COMPLETED" }, { onConflict: "match_date,label" })
         .select()
         .single();
       if (gameErr) { console.error("games insert", gameErr); alert("게임 저장 실패: " + gameErr.message); setLoading(false); return; }
