@@ -536,15 +536,14 @@ export default function MatchControl() {
 
 function AddPlayerForm({ onAdded }: { onAdded: (p: Player) => void }) {
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    if (!name.trim() || !phone.trim()) return alert("이름과 전화번호를 입력하세요.");
+    if (!name.trim()) return alert("이름을 입력하세요.");
     setSaving(true);
     const { data, error } = await supabase
       .from("players")
-      .insert({ name: name.trim(), phone_last4: phone.trim().slice(-4), tier: "B" })
+      .insert({ name: name.trim(), phone_last4: "0000", tier: "B" })
       .select()
       .single();
     setSaving(false);
@@ -552,7 +551,6 @@ function AddPlayerForm({ onAdded }: { onAdded: (p: Player) => void }) {
     if (data) {
       onAdded(data);
       setName("");
-      setPhone("");
     }
   };
 
@@ -565,19 +563,10 @@ function AddPlayerForm({ onAdded }: { onAdded: (p: Player) => void }) {
           placeholder="이름"
           className="border rounded px-3 py-2 text-black"
         />
-        <input
-          value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          placeholder="전화번호"
-          className="border rounded px-3 py-2 text-black"
-        />
         <Button onClick={submit} disabled={saving} size="xs">
           추가
         </Button>
       </Group>
-      <Text size="xs" c="dimmed">
-        전화번호는 뒤 4자리만 저장됩니다.
-      </Text>
     </Stack>
   );
 }
