@@ -54,4 +54,4 @@ export type Game = {
   created_at: string;
 };
 
-export type RoleType = "player" | "gk" | "referee" | "assistant_referee";
+export type RoleType = "FW" | "MF" | "DF" | "GK" | "referee" | "assistant_referee" | "player" | "gk";

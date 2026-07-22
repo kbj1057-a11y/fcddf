@@ -253,16 +253,28 @@ export default function MatchControl() {
         if (qErr) { console.error("match_quarters insert", qErr); alert("쿼터 저장 실패: " + qErr.message); setLoading(false); return; }
         if (!quarter) { console.error("match_quarters insert no data"); setLoading(false); return; }
 
-        const rows = Object.entries(lineups).map(([playerId, team]) => ({
-          quarter_id: quarter.id,
-          player_id: playerId,
-          team: team as "A" | "B" | "BENCH",
-          position: roles[playerId] === "gk" ? "GK" : team === "BENCH" ? "BENCH" : null,
-          is_gk: roles[playerId] === "gk",
-          played_minutes: team === "BENCH" ? 0 : 12,
-          referee: roles[playerId] === "referee",
-          assistant_referee: roles[playerId] === "assistant_referee",
-        }));
+        const rows = Object.entries(lineups).map(([playerId, team]) => {
+          const role = roles[playerId] ?? "player";
+          const isGK = role === "gk" || role === "GK";
+          const isRef = role === "referee";
+          const isAsst = role === "assistant_referee";
+          let position: string | null = null;
+          if (role === "FW" || role === "MF" || role === "DF") position = role;
+          else if (isGK) position = "GK";
+          else if (isRef) position = "주심";
+          else if (isAsst) position = "부심";
+          else if (team === "BENCH") position = "BENCH";
+          return {
+            quarter_id: quarter.id,
+            player_id: playerId,
+            team: team as "A" | "B" | "BENCH",
+            position,
+            is_gk: isGK,
+            played_minutes: team === "BENCH" ? 0 : 12,
+            referee: isRef,
+            assistant_referee: isAsst,
+          };
+        });
         const { error: qlErr } = await supabase.from("quarter_lineups").insert(rows);
         if (qlErr) { console.error("quarter_lineups insert", qlErr); alert("라인업 저장 실패: " + qlErr.message); setLoading(false); return; }
       }
@@ -431,11 +443,18 @@ export default function MatchControl() {
                   const darkBg = team.value === "A" ? "var(--mantine-color-orange-9)" : "var(--mantine-color-teal-9)";
                   return (
                     <Paper key={team.value} withBorder p="md" style={{ backgroundColor: bgColor }}>
-                      <Text fw={700}>{team.label}</Text>
+                      <Group justify="space-between">
+                        <Text fw={700}>{team.label}</Text>
+                        <Text size="sm" c="dimmed">{ordered.length}명</Text>
+                      </Group>
                       <Stack gap="xs" mt="sm">
                         {ordered.map((p) => {
                           const role = roles[p.id];
-                          const isDark = role === "gk" || role === "referee" || role === "assistant_referee";
+                          const isDark =
+                            role === "gk" ||
+                            role === "GK" ||
+                            role === "referee" ||
+                            role === "assistant_referee";
                           const rowBg = isDark ? darkBg : "transparent";
                           const nameColor = isDark ? "#fff" : "#000";
                           const roleLabel =
@@ -445,7 +464,8 @@ export default function MatchControl() {
                                 ? "부심"
                                 : role === "gk"
                                   ? "GK"
-                                  : "선수";
+                                  : role;
+                          const positionValue = role === "player" ? "player" : role;
                           return (
                             <Group key={p.id} gap="xs" wrap="wrap" p="xs" style={{ backgroundColor: rowBg, borderRadius: 6 }}>
                               <Text size="sm" className="min-w-20" style={{ color: nameColor, fontWeight: 600 }}>
@@ -454,24 +474,24 @@ export default function MatchControl() {
                               <Select
                                 size="xs"
                                 data={[
-                                  { value: team.value, label: teamLabel(team.value) },
-                                  { value: "BENCH", label: "휴식" },
-                                ]}
-                                value={lineups[p.id]}
-                                onChange={(val) => setTeam(p.id, val as "A" | "B" | "BENCH")}
-                                className="w-28"
-                                styles={{ dropdown: { zIndex: 9999 } }}
-                              />
-                              <Select
-                                size="xs"
-                                data={[
                                   { value: "player", label: "선수" },
-                                  { value: "gk", label: "GK" },
+                                  { value: "FW", label: "FW" },
+                                  { value: "MF", label: "MF" },
+                                  { value: "DF", label: "DF" },
+                                  { value: "GK", label: "GK" },
                                   { value: "referee", label: "주심" },
                                   { value: "assistant_referee", label: "부심" },
                                 ]}
-                                value={role ?? "player"}
-                                onChange={(val) => setPlayerRole(p.id, (val ?? "player") as RoleType)}
+                                value={positionValue}
+                                onChange={(val) => {
+                                  const v = val ?? "player";
+                                  if ((v === "referee" || v === "assistant_referee" || v === "gk")) {
+                                    setTeam(p.id, "BENCH");
+                                  } else {
+                                    setTeam(p.id, team.value);
+                                  }
+                                  setPlayerRole(p.id, v as RoleType);
+                                }}
                                 className="w-28"
                                 styles={{ dropdown: { zIndex: 9999 } }}
                               />
@@ -485,6 +505,7 @@ export default function MatchControl() {
                 })}
                 <Paper withBorder p="md">
                   <Text fw={600}>배치/역할</Text>
+                  <Text size="sm" c="dimmed" mt="xs">주황/블랙/연두/흰색/주심/부심/GK/휴식 중 선택</Text>
                   <Stack gap="xs" mt="sm">
                     {attendingPlayers
                       .filter((p) => lineups[p.id] === "BENCH" || !lineups[p.id])
@@ -495,20 +516,24 @@ export default function MatchControl() {
                             ? "주심"
                             : role === "assistant_referee"
                               ? "부심"
-                              : role === "gk"
+                              : role === "gk" || role === "GK"
                                 ? "GK"
-                                : "휴식";
-                        const currentValue =
-                          role === "referee"
-                            ? "referee"
-                            : role === "assistant_referee"
-                              ? "assistant_referee"
-                              : role === "gk"
-                                ? "gk"
                                 : lineups[p.id] === "A"
-                                  ? "A"
+                                  ? "주황/블랙"
                                   : lineups[p.id] === "B"
-                                    ? "B"
+                                    ? "연두/흰색"
+                                    : "휴식";
+                        const currentValue =
+                          lineups[p.id] === "A"
+                            ? "A"
+                            : lineups[p.id] === "B"
+                              ? "B"
+                              : role === "referee"
+                                ? "referee"
+                                : role === "assistant_referee"
+                                  ? "assistant_referee"
+                                  : role === "gk" || role === "GK"
+                                    ? "gk"
                                     : "BENCH";
                         return (
                           <Group key={p.id} gap="xs" wrap="wrap">
@@ -544,6 +569,7 @@ export default function MatchControl() {
                                 }
                               }}
                               className="w-36"
+                              styles={{ dropdown: { zIndex: 9999 } }}
                             />
                             <Badge color="gray">{combined}</Badge>
                           </Group>
