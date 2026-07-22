@@ -163,30 +163,30 @@ export default function MatchControl() {
     };
 
     const previousInfo: Record<string, { team: string; role: string }> = {};
-    const prevGameLabel = String(Math.max(1, parseInt(gameLabel, 10) - 1));
+    const currentLabelNum = parseInt(gameLabel, 10) || 1;
+    const prevLabels = [];
+    for (let i = 1; i < currentLabelNum; i++) prevLabels.push(String(i));
     try {
-      const { data: prevGame } = await supabase
-        .from("games")
-        .select("id")
-        .eq("match_date", matchDate)
-        .eq("label", prevGameLabel)
-        .maybeSingle();
-      if (prevGame?.id) {
-        const { data: prevQuarters } = await supabase
-          .from("match_quarters")
+      if (prevLabels.length > 0) {
+        const { data: prevGames } = await supabase
+          .from("games")
           .select("id")
-          .eq("match_date", matchDate);
-        const qIds = (prevQuarters || []).map((q) => q.id);
-        if (qIds.length) {
-          const { data: prevLineups } = await supabase
-            .from("quarter_lineups")
-            .select("player_id, team, position")
-            .in("quarter_id", qIds);
-          for (const row of prevLineups || []) {
-            previousInfo[row.player_id] = {
-              team: row.team,
-              role: row.position ?? "player",
-            };
+          .eq("match_date", matchDate)
+          .in("label", prevLabels);
+        if (prevGames?.length) {
+          const { data: prevQuarters } = await supabase.from("match_quarters").select("id").eq("match_date", matchDate);
+          const qIds = (prevQuarters || []).map((q) => q.id);
+          if (qIds.length) {
+            const { data: prevLineups } = await supabase
+              .from("quarter_lineups")
+              .select("player_id, team, position")
+              .in("quarter_id", qIds);
+            for (const row of prevLineups || []) {
+              previousInfo[row.player_id] = {
+                team: row.team,
+                role: row.position ?? "player",
+              };
+            }
           }
         }
       }
